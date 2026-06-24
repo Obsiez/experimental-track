@@ -1,21 +1,62 @@
 <div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
+<img width="1200" height="475" alt="GHBanner" src="https://google.dev" />
 </div>
 
-# Run and deploy your AI Studio app
+# Challan Track
 
-This contains everything you need to run your app locally.
+A modern web application built with Google AI Studio to track, analyze, and manage challans using Gemini.
 
-View your app in AI Studio: https://ai.studio/apps/bb2e9e2e-f220-43f5-9c68-7edd8ab43626
+## 🚀 Live Deployment
 
-## Run Locally
+View the live application on AI Studio: [Launch App](https://ai.studio)
 
-**Prerequisites:**  Node.js
+## 🛠️ Prerequisites
 
+Ensure you have the following installed on your local machine:
+* **Node.js** (v18.0.0 or higher recommended)
+* **npm** (comes packaged with Node)
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
-"# challan-track" 
+## 💻 Local Development
+
+Follow these steps to get your local development environment running:
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com
+   cd challan-track
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+
+3. **Configure environment variables:**
+   * Open the `.env.local` file in your root directory.
+   * Add your Gemini API key:
+     ```env
+     GEMINI_API_KEY=your_actual_api_key_here
+     ```
+
+4. **Start the development server:**
+   ```bash
+   npm run dev
+   ```
+   Open your browser and navigate to the local server address provided in your terminal.
+
+## 📦 Production Deployment
+
+This application is ready to be deployed to cloud hosting platforms.
+
+### 🌐 Deploying to Vercel (Recommended)
+1. Push your project code to a GitHub repository.
+2. Import the repository into your [Vercel Dashboard](https://vercel.com).
+3. In the **Environment Variables** setup section, add:
+   * **Key**: `GEMINI_API_KEY`
+   * **Value**: *Your Gemini API Key*
+4. Click **Deploy**.
+
+### 🔒 Environment Security
+* Never commit your `.env.local` file to GitHub.
+* Ensure `.env.local` is listed inside your `.gitignore` file.
+* Always use the production platform's dashboard settings to securely store API keys.
