@@ -217,7 +217,10 @@ export default function CustomerManager({
  {t.customerAccounts} ({formatNumber(customers.length, lang)})
  </h2>
  <button
- onClick={() => setShowAddForm(!showAddForm)}
+ onClick={() => {
+ if (localStorage.getItem('haptics') === 'true') window.navigator?.vibrate?.(50);
+ setShowAddForm(!showAddForm);
+ }}
  className="px-5 py-3 bg-emerald-600 text-white font-bold rounded-xl flex items-center justify-center gap-2 shadow-md shadow-emerald-100 dark:shadow-none hover:bg-emerald-700 transition-colors cursor-pointer text-base"
  id="add_customer_btn"
  >
@@ -335,7 +338,7 @@ export default function CustomerManager({
  className={`px-4 py-2.5 rounded-xl font-bold transition-colors shrink-0 cursor-pointer ${
  filterStatus === 'settled'
  ? 'bg-emerald-600 text-white shadow-md'
- : 'bg-white text-emerald-650 border border-emerald-250 dark:bg-zinc-900 dark:border-emerald-950/40 dark:text-emerald-400'
+ : 'bg-white text-emerald-650 border border-emerald-500 dark:bg-zinc-900 dark:border-emerald-950/40 dark:text-emerald-400'
  }`}
  >
  {lang === 'bn' ? 'পরিশোধিত/০ টাকা' : 'Settled (৳0)'} ({formatNumber(customers.filter(c => c.outstandingDue === 0).length, lang)})

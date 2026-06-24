@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Customer, Transaction, UserSettings } from '../types';
 import { 
  Settings, Moon, Sun, Cloud, Download, LogOut, CheckCircle2, Globe 
@@ -26,6 +26,15 @@ export default function SettingsManager({
  onLangChange
 }: SettingsManagerProps) {
  const t = translations[lang];
+
+ const [hapticsOn, setHapticsOn] = useState(() => localStorage.getItem('haptics') === 'true');
+
+ const toggleHaptics = () => {
+ const newVal = !hapticsOn;
+ setHapticsOn(newVal);
+ localStorage.setItem('haptics', String(newVal));
+ if (newVal) window.navigator?.vibrate?.(50);
+ };
 
  const handleBackupExport = () => {
  const backupData = {
@@ -72,7 +81,10 @@ export default function SettingsManager({
  <div className="grid grid-cols-2 gap-4">
  <button
  type="button"
- onClick={() => onLangChange('en')}
+ onClick={() => {
+    if (localStorage.getItem('haptics') === 'true') window.navigator?.vibrate?.(50);
+    onLangChange('en');
+  }}
  className={`py-4 px-4 rounded-xl border-2 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all ${
  lang === 'en'
  ? 'bg-emerald-50 border-emerald-500 text-emerald-600 font-bold dark:bg-emerald-950/20'
@@ -85,7 +97,10 @@ export default function SettingsManager({
 
  <button
  type="button"
- onClick={() => onLangChange('bn')}
+ onClick={() => {
+    if (localStorage.getItem('haptics') === 'true') window.navigator?.vibrate?.(50);
+    onLangChange('bn');
+  }}
  className={`py-4 px-4 rounded-xl border-2 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all ${
  lang === 'bn'
  ? 'bg-emerald-50 border-emerald-500 text-emerald-600 font-bold dark:bg-emerald-950/20 dark:text-emerald-400'
@@ -113,7 +128,10 @@ export default function SettingsManager({
  <div className="grid grid-cols-2 gap-4 pt-4 border-t border-zinc-100 dark:border-zinc-800">
  <button
  type="button"
- onClick={() => updateTheme('light')}
+ onClick={() => {
+    if (localStorage.getItem('haptics') === 'true') window.navigator?.vibrate?.(50);
+    updateTheme('light');
+  }}
  className={`py-4 px-4 rounded-xl border-2 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all ${
  activeTheme === 'light'
  ? 'bg-zinc-55 border-emerald-500 text-emerald-600 font-bold dark:bg-zinc-850'
@@ -126,7 +144,10 @@ export default function SettingsManager({
 
  <button
  type="button"
- onClick={() => updateTheme('dark')}
+ onClick={() => {
+    if (localStorage.getItem('haptics') === 'true') window.navigator?.vibrate?.(50);
+    updateTheme('dark');
+  }}
  className={`py-4 px-4 rounded-xl border-2 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all ${
  activeTheme === 'dark'
  ? 'bg-zinc-950 border-emerald-500 text-emerald-400 font-bold'
@@ -136,6 +157,30 @@ export default function SettingsManager({
  <Moon className="w-6 h-6 stroke-[2]" />
  <span className="text-base">{t.darkMode}</span>
  </button>
+ </div>
+ </div>
+
+ {/* HAPTICS TOGGLE CARD */}
+ <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-6 rounded-2xl shadow-md space-y-4">
+ <div className="flex items-center justify-between">
+   <div>
+     <h2 className="text-xl font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+       {lang === 'bn' ? 'ভাইব্রেশন' : 'Haptic Feedback'}
+     </h2>
+     <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
+       {lang === 'bn' ? 'বাটনে চাপ দিলে হালকা ভাইব্রেশন হবে' : 'Vibrate on button press'}
+     </p>
+   </div>
+   <button
+     onClick={toggleHaptics}
+     className={`w-14 h-8 flex items-center rounded-full p-1 cursor-pointer transition-colors ${
+       hapticsOn ? 'bg-emerald-500' : 'bg-zinc-200 dark:bg-zinc-700'
+     }`}
+   >
+     <div className={`bg-white w-6 h-6 rounded-full shadow-md transform transition-transform ${
+       hapticsOn ? 'translate-x-6' : 'translate-x-0'
+     }`} />
+   </button>
  </div>
  </div>
 

@@ -30,6 +30,7 @@ export default function App() {
 
  // History API / Breadcrumbs for Android Back Button support
  const navigateTo = (tab: typeof currentTab, customerId: string | null = null, replace = false) => {
+ if (localStorage.getItem('haptics') === 'true') window.navigator?.vibrate?.(50);
  setCurrentTab(tab);
  setSelectedCustomerIdForDetail(customerId);
  const state = { tab, customerId, quickEntry: false };
@@ -42,6 +43,7 @@ export default function App() {
  };
 
  const openQuickEntry = () => {
+ if (localStorage.getItem('haptics') === 'true') window.navigator?.vibrate?.(50);
  window.history.pushState({ ...window.history.state, quickEntry: true }, '', window.location.href);
  setIsQuickEntryOpen(true);
  };
@@ -220,6 +222,15 @@ export default function App() {
  onCancel?: () => void;
  } | null>(null);
 
+ useEffect(() => {
+    if (appDialog?.isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+    return () => { document.body.style.overflow = 'unset'; };
+  }, [appDialog?.isOpen]);
+
  const triggerAlert = (title: string, message: string) => {
  toast.error(title, { description: message });
  };
@@ -343,7 +354,10 @@ export default function App() {
         <div className="w-full max-w-md flex items-center justify-center gap-3 mb-8 relative z-10">
  {/* Theme switcher */}
  <button
- onClick={() => handleThemeChange(theme === 'dark' ? 'light' : 'dark')}
+ onClick={() => {
+    if (localStorage.getItem('haptics') === 'true') window.navigator?.vibrate?.(50);
+    handleThemeChange(theme === 'dark' ? 'light' : 'dark');
+  }}
  className="px-4 py-3 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl text-zinc-800 dark:text-zinc-100 shadow-sm hover:bg-zinc-50 dark:hover:bg-zinc-800 cursor-pointer flex items-center gap-2 text-xs font-bold transition-colors"
  title="Toggle theme"
  >
@@ -353,7 +367,10 @@ export default function App() {
 
  {/* Language selector toggle */}
  <button
- onClick={() => handleLangChange(lang === 'bn' ? 'en' : 'bn')}
+ onClick={() => {
+    if (localStorage.getItem('haptics') === 'true') window.navigator?.vibrate?.(50);
+    handleLangChange(lang === 'bn' ? 'en' : 'bn');
+  }}
  className="px-4 py-3 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl font-extrabold text-xs text-zinc-800 dark:text-zinc-100 shadow-sm hover:bg-zinc-50 dark:hover:bg-zinc-800 flex items-center gap-1.5 cursor-pointer transition-colors"
  >
  <Globe className="w-4 h-4 text-emerald-500" />
@@ -661,8 +678,9 @@ export default function App() {
  initial={{ opacity: 0 }}
  animate={{ opacity: 1 }}
  exit={{ opacity: 0 }}
+ transition={{ duration: 0.15 }}
  onClick={() => { if (appDialog.type === 'alert') setAppDialog(null); }}
- className="absolute inset-0 bg-black/60 backdrop-blur-xs"
+ className="absolute inset-0 bg-black/80 backdrop-blur-md"
  />
  
  {/* Modal Body Container */}
