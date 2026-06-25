@@ -27,6 +27,16 @@ export default function App() {
  const [currentTab, setCurrentTab] = useState<'home' | 'customers' | 'analytics' | 'reminders' | 'settings'>('home');
  const [isQuickEntryOpen, setIsQuickEntryOpen] = useState(false);
  const [selectedCustomerIdForDetail, setSelectedCustomerIdForDetail] = useState<string | null>(null);
+ const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+
+ useEffect(() => {
+   const handleBeforeInstallPrompt = (e: any) => {
+     e.preventDefault();
+     setDeferredPrompt(e);
+   };
+   window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+   return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+ }, []);
 
  // History API / Breadcrumbs for Android Back Button support
  const navigateTo = (tab: typeof currentTab, customerId: string | null = null, replace = false) => {
@@ -593,6 +603,8 @@ export default function App() {
  onSignOut={handleSignOut}
  lang={lang}
  onLangChange={handleLangChange}
+ deferredPrompt={deferredPrompt}
+ onInstallComplete={() => setDeferredPrompt(null)}
  />
  )}
  </div>

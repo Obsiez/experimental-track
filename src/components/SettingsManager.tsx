@@ -14,6 +14,8 @@ interface SettingsManagerProps {
  onSignOut: () => void;
  lang: Language;
  onLangChange: (lang: Language) => void;
+ deferredPrompt: any;
+ onInstallComplete: () => void;
 }
 
 export default function SettingsManager({
@@ -23,7 +25,9 @@ export default function SettingsManager({
  transactions,
  onSignOut,
  lang,
- onLangChange
+ onLangChange,
+ deferredPrompt,
+ onInstallComplete
 }: SettingsManagerProps) {
  const t = translations[lang];
 
@@ -259,6 +263,38 @@ export default function SettingsManager({
  {t.signOutBtn}
  </button>
  </div>
+
+ {/* 6. NATIVE PWA INSTALL APP */}
+ {deferredPrompt && (
+    <div className="bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 p-6 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div>
+        <div className="text-xs font-bold text-emerald-600 dark:text-emerald-500 uppercase tracking-wide">
+          {lang === 'bn' ? 'অ্যাপ ইনস্টল করুন' : 'Install App'}
+        </div>
+        <div className="text-base font-black text-zinc-900 dark:text-white mt-1">
+          {lang === 'bn' ? 'হোম স্ক্রিনে যুক্ত করুন' : 'Add to Home Screen'}
+        </div>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+          {lang === 'bn' ? 'দ্রুত অ্যাক্সেস এবং ফুলস্ক্রিন অভিজ্ঞতার জন্য অ্যাপটি ইনস্টল করুন।' : 'Install the app for quick access and a fullscreen experience.'}
+        </p>
+      </div>
+
+      <button
+        onClick={async () => {
+          if (!deferredPrompt) return;
+          deferredPrompt.prompt();
+          const { outcome } = await deferredPrompt.userChoice;
+          if (outcome === 'accepted') {
+            onInstallComplete();
+          }
+        }}
+        className="px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-sm flex items-center justify-center gap-2 cursor-pointer shadow-md transition-colors shrink-0"
+      >
+        <Download className="w-4 h-4 text-white" />
+        {lang === 'bn' ? 'ইনস্টল' : 'Install'}
+      </button>
+    </div>
+  )}
 
  </div>
  );
