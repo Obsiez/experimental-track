@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { 
  collection, 
  doc, 
@@ -23,6 +23,13 @@ export function useLedger(userId: string | undefined) {
  const [settings, setSettings] = useState<UserSettings | null>(null);
  const [loading, setLoading] = useState(true);
  const [isOfflineFallback, setIsOfflineFallback] = useState(false);
+
+ const lastSubmitRef = useRef<{
+   timestamp: number;
+   customerId: string;
+   type: 'due' | 'payment';
+   amount: number;
+ } | null>(null);
 
  // Helper: Load all ledger data from local storage
  const loadLocalData = () => {
@@ -242,7 +249,7 @@ export function useLedger(userId: string | undefined) {
  ...data,
  id: docSnap.id,
  date: data.date?.toDate ? data.date.toDate() : new Date(data.date),
- createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(data.createdAt),
+ createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : (data.createdAt ? new Date(data.createdAt) : new Date()),
  } as Transaction);
  });
  setTransactions(list);
@@ -393,14 +400,30 @@ export function useLedger(userId: string | undefined) {
 
  // Record a new transaction (due or payment) and update customer balance
  const addTransaction = async (
- customerId: string, 
- type: 'due' | 'payment', 
- amount: number, 
- description: string = '', 
- date: Date = new Date(),
- fallbackCustomerInfo?: { name: string; phone: string }
+   customerId: string, 
+   type: 'due' | 'payment', 
+   amount: number, 
+   description: string = '', 
+   date: Date = new Date(),
+   fallbackCustomerInfo?: { name: string; phone: string }
  ) => {
- if (!userId) return;
+   if (!userId) return;
+
+   // Accidental Time-Based Double-Click prevention
+   const now = Date.now();
+   if (lastSubmitRef.current) {
+     const { timestamp, customerId: prevCustId, type: prevType, amount: prevAmount } = lastSubmitRef.current;
+     if (
+       now - timestamp < 1000 &&
+       prevCustId === customerId &&
+       prevType === type &&
+       prevAmount === amount
+     ) {
+       console.warn("Blocked duplicate transaction submission within 1 second.");
+       return;
+     }
+   }
+   lastSubmitRef.current = { timestamp: now, customerId, type, amount };
  
  let customer = customers.find(c => c.id === customerId);
  let customerName = customer?.name || fallbackCustomerInfo?.name;

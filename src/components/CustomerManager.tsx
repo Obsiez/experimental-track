@@ -214,6 +214,8 @@ interface CustomerManagerProps {
  lang: Language;
  triggerConfirm?: (title: string, message: string, onConfirm: () => void) => void;
   swipeGesturesEnabled?: boolean;
+  highlightedTxId?: string | null;
+  setHighlightedTxId?: (id: string | null) => void;
 }
 
 export default function CustomerManager({
@@ -231,7 +233,7 @@ export default function CustomerManager({
  triggerConfirm
 ,
   swipeGesturesEnabled = true
-}: CustomerManagerProps) {
+, highlightedTxId = null, setHighlightedTxId = () => {}}: CustomerManagerProps) {
  const t = translations[lang];
 
  const [searchQuery, setSearchQuery] = useState('');
@@ -267,22 +269,84 @@ export default function CustomerManager({
   const [deletingCustomer, setDeletingCustomer] = useState<Customer | null>(null);
   const [ledgerLimit, setLedgerLimit] = useState(5);
 
+    const [duplicateTxWarning, setDuplicateTxWarning] = useState<Transaction | null>(null);
+  const [hasShownDuplicateWarning, setHasShownDuplicateWarning] = useState(false);
+
   React.useEffect(() => {
     setLedgerLimit(5);
+    setDuplicateTxWarning(null);
+    setHasShownDuplicateWarning(false);
   }, [selectedCustomerId]);
 
- // Handle history for modals (mobile back gesture)
- React.useEffect(() => {
-   const handlePopState = () => {
-      if (editingTx || deletingTx || deletingCustomer) {
-       setEditingTx(null);
-       setDeletingTx(null);
+  React.useEffect(() => {
+    setDuplicateTxWarning(null);
+    setHasShownDuplicateWarning(false);
+  }, [openActionType]);
+
+  // Disable background scrolling when any modal popup is active
+  React.useEffect(() => {
+    if (deletingCustomer || editingTx || deletingTx || duplicateTxWarning) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [deletingCustomer, editingTx, deletingTx, duplicateTxWarning]);
+
+   // Handle history for modals (mobile back gesture)
+  React.useEffect(() => {
+    const handlePopState = () => {
+      if (editingTx || deletingTx || deletingCustomer || duplicateTxWarning) {
+        setEditingTx(null);
+        setDeletingTx(null);
         setDeletingCustomer(null);
-     }
-   };
-   window.addEventListener('popstate', handlePopState);
-   return () => window.removeEventListener('popstate', handlePopState);
- }, [editingTx, deletingTx]);
+        setDuplicateTxWarning(null);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [editingTx, deletingTx, deletingCustomer, duplicateTxWarning]);
+
+  // Smooth scroll and highlight effect for target transaction
+  React.useEffect(() => {
+    if (highlightedTxId) {
+      const element = document.getElementById(`tx-row-${highlightedTxId}`);
+      if (element) {
+        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const timer = setTimeout(() => {
+          if (setHighlightedTxId) {
+            setHighlightedTxId(null);
+          }
+        }, 3000);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [highlightedTxId, selectedCustomerId]);
+
+  const getDuplicate = (actionType: 'due' | 'payment', amountStr: string) => {
+    if (!selectedCustomerId || !amountStr) return null;
+    const cleaned = amountStr.replace(/,/g, '');
+    const amountVal = parseFloat(cleaned);
+    if (isNaN(amountVal) || amountVal <= 0) return null;
+
+    const customerTxs = transactions
+      .filter(t => t.customerId === selectedCustomerId)
+      .sort((a, b) => {
+        const dateA = a.createdAt ? new Date(a.createdAt) : new Date(a.date);
+        const dateB = b.createdAt ? new Date(b.createdAt) : new Date(b.date);
+        return dateB.getTime() - dateA.getTime();
+      });
+    const last5 = customerTxs.slice(0, 5);
+    const now = Date.now();
+    return last5.find(t => {
+      const tDate = t.createdAt ? new Date(t.createdAt) : new Date(t.date);
+      return t.type === actionType && 
+             Math.abs(t.amount - amountVal) < 0.01 && 
+             (now - tDate.getTime()) < 24 * 60 * 60 * 1000;
+    }) || null;
+  };
 
  const openEditTxModal = (tx: Transaction) => {
    setEditingTx(tx);
@@ -372,29 +436,46 @@ export default function CustomerManager({
  }
  };
 
- const handleAddInlineTransaction = async (e: React.FormEvent) => {
- e.preventDefault();
- if (!selectedCustomerId || !openActionType) return;
- const cleaned = actionAmount.replace(/,/g, '');
- const amountVal = parseFloat(cleaned);
- if (!amountVal || amountVal <= 0) return;
+   const handleAddInlineTransaction = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await executeInlineTransaction(false);
+  };
 
- setTxSubmitting(true);
- try {
- await Promise.all([
- addTransaction(selectedCustomerId, openActionType, amountVal, actionDesc),
- new Promise(resolve => setTimeout(resolve, 600))
- ]);
- setActionAmount('');
- setActionDesc('');
- setOpenActionType(null);
- toast.success(lang === 'bn' ? 'হিসাব সফলভাবে যোগ হয়েছে' : 'Transaction added successfully');
- } catch (err) {
- console.error(err);
- } finally {
- setTxSubmitting(false);
- }
- };
+  const executeInlineTransaction = async (bypassDuplicateCheck = false) => {
+    if (!selectedCustomerId || !openActionType) return;
+    const cleaned = actionAmount.replace(/,/g, '');
+    const amountVal = parseFloat(cleaned);
+    if (!amountVal || amountVal <= 0) return;
+
+    if (!bypassDuplicateCheck && !hasShownDuplicateWarning) {
+      const duplicate = getDuplicate(openActionType, actionAmount);
+      if (duplicate) {
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+        setDuplicateTxWarning(duplicate);
+        return;
+      }
+    }
+
+    setTxSubmitting(true);
+    try {
+      await Promise.all([
+        addTransaction(selectedCustomerId, openActionType, amountVal, actionDesc),
+        new Promise(resolve => setTimeout(resolve, 600))
+      ]);
+      setActionAmount('');
+      setActionDesc('');
+      setOpenActionType(null);
+      setDuplicateTxWarning(null);
+      setHasShownDuplicateWarning(false);
+      toast.success(lang === 'bn' ? 'হিসাব সফলভাবে যোগ হয়েছে' : 'Transaction added successfully');
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setTxSubmitting(false);
+    }
+  };
 
   const handleDelete = (c: Customer) => {
     window.history.pushState({ modal: 'deleteCustomer' }, '');
@@ -882,8 +963,11 @@ export default function CustomerManager({
  
  {/* DELETE ACCOUNT BUTTON */}
  <button
-              onClick={() => handleDelete(selectedCustomer)}
- className="py-3 px-4 bg-rose-50 hover:bg-rose-100 text-rose-600 dark:bg-rose-950/20 dark:hover:bg-rose-900/30 dark:text-rose-400 rounded-xl flex items-center justify-center gap-2 cursor-pointer text-xs font-semibold"
+              onClick={() => {
+                if (localStorage.getItem('haptics') === 'true') window.navigator?.vibrate?.([50, 50]);
+                handleDelete(selectedCustomer);
+              }}
+              className="py-3 px-4 bg-rose-50 hover:bg-rose-100 text-rose-600 dark:bg-rose-950/20 dark:hover:bg-rose-900/30 dark:text-rose-400 rounded-xl flex items-center justify-center gap-2 cursor-pointer text-xs font-semibold"
  >
  <Trash2 className="w-4 h-4" />
  {t.deleteAccount}
@@ -959,6 +1043,13 @@ export default function CustomerManager({
  required
  autoFocus
  />
+
+              {openActionType && !txSubmitting && getDuplicate(openActionType, actionAmount) && (
+                <p className="text-xs font-bold text-amber-600 dark:text-amber-500 mt-1.5 flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  {t.duplicateRealtimeWarning}
+                </p>
+              )}
 
               {openActionType === 'payment' && selectedCustomer && selectedCustomer.outstandingDue > 0 && (
                 <div className="flex items-center gap-2 mt-2.5 p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-xl border border-zinc-200 dark:border-zinc-800">
@@ -1056,7 +1147,7 @@ export default function CustomerManager({
  </AnimatePresence>
 
  {/* HISTORICAL LEDGER FOR THIS CUSTOMER */}
- <div className="space-y-3">
+  <div id="statements_timeline" className="space-y-3">
  <span className="text-xs font-extrabold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider block">
  {t.statements} ({formatNumber(selectedCustomerTransactions.length, lang)})
  </span>
@@ -1072,9 +1163,14 @@ export default function CustomerManager({
  <div className="divide-y divide-zinc-100 dark:divide-zinc-850">
  {selectedCustomerTransactions.slice(0, ledgerLimit).map(tx => (
  <div 
-  key={tx.id} 
-  className="p-4 flex flex-col hover:bg-zinc-50/50 dark:hover:bg-zinc-850/50 transition-colors group cursor-default"
-  >
+   key={tx.id} 
+   id={`tx-row-${tx.id}`}
+   className={`p-4 flex flex-col hover:bg-zinc-50/50 dark:hover:bg-zinc-850/50 transition-all duration-500 group cursor-default ${
+     highlightedTxId === tx.id 
+       ? 'ring-4 ring-inset ring-amber-500/80 dark:ring-amber-400/80 bg-amber-50 dark:bg-amber-950/40 rounded-2xl' 
+       : ''
+   }`}
+   >
   <div className="flex items-center justify-between">
   <div className="flex items-center gap-3.5 min-w-0">
  <div className={`p-2 rounded-lg shrink-0 ${
@@ -1106,6 +1202,7 @@ export default function CustomerManager({
     <button 
       onClick={(e) => {
         e.stopPropagation();
+        if (localStorage.getItem('haptics') === 'true') window.navigator?.vibrate?.(50);
         openEditTxModal(tx);
       }}
       className="p-1.5 rounded-lg text-zinc-400 hover:text-emerald-500 hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer"
@@ -1116,6 +1213,7 @@ export default function CustomerManager({
     <button 
       onClick={(e) => {
         e.stopPropagation();
+        if (localStorage.getItem('haptics') === 'true') window.navigator?.vibrate?.([50, 50]);
         openDeleteTxModal(tx);
       }}
       className="p-1.5 rounded-lg text-zinc-400 hover:text-rose-500 hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer"
@@ -1369,6 +1467,84 @@ export default function CustomerManager({
             className="w-full py-4 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-300 font-bold rounded-xl cursor-pointer"
           >
             {lang === 'bn' ? 'বাতিল' : 'Cancel'}
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  )}
+  {/* Duplicate Entry Warning Modal */}
+  {duplicateTxWarning && (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80">
+      <motion.div
+        initial={{ opacity: 0, y: 50 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-white dark:bg-zinc-900 w-full sm:max-w-sm rounded-t-3xl sm:rounded-3xl shadow-2xl p-6"
+      >
+        <div className="text-center mb-6">
+          <div className="w-16 h-16 bg-amber-100 dark:bg-amber-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
+            <AlertTriangle className="w-8 h-8 text-amber-600 dark:text-amber-500" />
+          </div>
+          <h3 className="text-lg font-black text-amber-600 dark:text-amber-500 mb-2">
+            {t.duplicateWarningTitle}
+          </h3>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            {t.duplicateWarningDesc}
+          </p>
+          
+          {/* Details Card */}
+          <div className="bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 text-left space-y-2.5 mt-4">
+            <div className="flex justify-between items-baseline">
+              <span className="text-xs font-bold text-zinc-400 dark:text-zinc-500 uppercase">{t.type}</span>
+              <span className={`text-xs font-black px-2.5 py-0.5 rounded-full ${
+                duplicateTxWarning.type === 'due' 
+                  ? 'bg-rose-100 text-rose-600 dark:bg-rose-955/40 dark:text-rose-400' 
+                  : 'bg-cyan-100 text-cyan-600 dark:bg-cyan-955/40 dark:text-cyan-400'
+              }`}>
+                {duplicateTxWarning.type === 'due' ? t.duePlus : t.paymentMinus}
+              </span>
+            </div>
+            <div className="flex justify-between items-baseline">
+              <span className="text-xs font-bold text-zinc-400 dark:text-zinc-500 uppercase">{t.amount}</span>
+              <span className={`text-sm font-black ${
+                duplicateTxWarning.type === 'due' ? 'text-rose-600 dark:text-rose-505' : 'text-cyan-600 dark:text-cyan-400'
+              }`}>
+                ৳ {formatNumber(duplicateTxWarning.amount, lang)}
+              </span>
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-col gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              if (setHighlightedTxId) {
+                setHighlightedTxId(duplicateTxWarning.id);
+              }
+              setDuplicateTxWarning(null);
+            }}
+            className="w-full py-4 bg-zinc-900 hover:bg-zinc-850 dark:bg-zinc-100 dark:hover:bg-zinc-200 text-white dark:text-zinc-900 font-bold rounded-xl cursor-pointer text-center"
+          >
+            {t.viewExistingEntry}
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              setHasShownDuplicateWarning(true);
+              setDuplicateTxWarning(null);
+              await executeInlineTransaction(true);
+            }}
+            className="w-full py-4 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-300 font-bold rounded-xl cursor-pointer"
+          >
+            {t.addAnyway}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setDuplicateTxWarning(null);
+            }}
+            className="w-full py-4 bg-zinc-50 dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400 font-bold rounded-xl cursor-pointer"
+          >
+            {t.cancel}
           </button>
         </div>
       </motion.div>

@@ -133,6 +133,14 @@ export const translations = {
  topEarners: "Highest Repayments Got",
  salesVsCollections: "Credit Sales vs. Cash Collections",
  monthSelect: "Filter by Month",
+ duplicateWarningTitle: "Duplicate Entry Warning",
+ duplicateWarningDesc: "An identical transaction (same amount and type) was already logged for this customer within the last 24 hours. Do you want to view the existing entry or add anyway?",
+ viewExistingEntry: "View Existing Entry",
+ addAnyway: "Add Anyway",
+ type: "Type",
+ duePlus: "Due (+)",
+ paymentMinus: "Payment (-)",
+ duplicateRealtimeWarning: "Warning: Identical entry logged within the last 24 hours.",
  },
  bn: {
  appName: "চালান ট্র্যাক",
@@ -265,6 +273,14 @@ export const translations = {
  topEarners: "সর্বোচ্চ আদায়কৃত হিসাব",
  salesVsCollections: "বাকিতে বিক্রি বনাম নগদ আদায়",
  monthSelect: "মাস নির্বাচন করুন",
+ duplicateWarningTitle: "অনুরূপ হিসাবের সতর্কবার্তা",
+ duplicateWarningDesc: "এই গ্রাহকের জন্য গত ২৪ ঘণ্টার মধ্যে একটি অভিন্ন লেনদেন (একই পরিমাণ এবং ধরন) ইতিমধ্যেই রেকর্ড করা হয়েছে। আপনি কি পূর্ববর্তী লেনদেনটি দেখতে চান নাকি নতুনভাবে যোগ করতে চান?",
+ viewExistingEntry: "পূর্ববর্তী হিসাবটি দেখুন",
+ addAnyway: "নতুনভাবে যোগ করুন",
+ type: "ধরন",
+ duePlus: "বাকি (+)",
+ paymentMinus: "আদায় (-)",
+ duplicateRealtimeWarning: "সতর্কবার্তা: গত ২৪ ঘণ্টার মধ্যে এই একই হিসাব যোগ করা হয়েছে।",
  }
 };
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Customer, Transaction, UserSettings } from '../types';
 import { 
  Settings, Moon, Sun, Cloud, Download, LogOut, CheckCircle2, Globe, AlertTriangle, X, RotateCcw, Trash2 
@@ -49,6 +49,18 @@ export default function SettingsManager({
 
  const [hapticsOn, setHapticsOn] = useState(() => localStorage.getItem('haptics') === 'true');
   const [confirmAction, setConfirmAction] = useState<any>(null);
+
+  // Scroll lock when modal is active
+  useEffect(() => {
+    if (confirmAction) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [confirmAction]);
   const [isDismissed, setIsDismissed] = useState(() => localStorage.getItem('install_card_dismissed') === 'true');
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true;
 
@@ -316,7 +328,7 @@ export default function SettingsManager({
            localStorage.setItem('install_card_dismissed', 'true');
            setIsDismissed(true);
          }}
-         className="absolute top-3 right-3 p-1 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 rounded-full cursor-pointer transition-colors"
+         className="absolute top-3 right-3 p-1 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 rounded-full cursor-pointer transition-colors sm:hidden"
          title={lang === 'bn' ? 'বন্ধ করুন' : 'Dismiss'}
        >
          <X className="w-4 h-4 text-emerald-600 dark:text-emerald-500" />
@@ -333,20 +345,33 @@ export default function SettingsManager({
         </p>
       </div>
 
-      <button
-        onClick={async () => {
-          if (!deferredPrompt) return;
-          deferredPrompt.prompt();
-          const { outcome } = await deferredPrompt.userChoice;
-          if (outcome === 'accepted') {
-            onInstallComplete();
-          }
-        }}
-        className="px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-sm flex items-center justify-center gap-2 cursor-pointer shadow-md transition-colors shrink-0"
-      >
-        <Download className="w-4 h-4 text-white" />
-        {lang === 'bn' ? 'ইনস্টল' : 'Install'}
-      </button>
+      <div className="flex items-center gap-3 shrink-0 w-full sm:w-auto">
+        {/* Dismiss Button (Desktop only) */}
+        <button 
+          type="button"
+          onClick={() => {
+            localStorage.setItem('install_card_dismissed', 'true');
+            setIsDismissed(true);
+          }}
+          className="hidden sm:inline-flex px-5 py-3 border border-emerald-250 dark:border-emerald-800 bg-transparent hover:bg-emerald-100/50 dark:hover:bg-emerald-900/20 text-emerald-600 dark:text-emerald-500 font-extrabold rounded-xl text-sm justify-center items-center cursor-pointer transition-colors"
+        >
+          {lang === 'bn' ? 'বন্ধ করুন' : 'Dismiss'}
+        </button>
+        <button
+          onClick={async () => {
+            if (!deferredPrompt) return;
+            deferredPrompt.prompt();
+            const { outcome } = await deferredPrompt.userChoice;
+            if (outcome === 'accepted') {
+              onInstallComplete();
+            }
+          }}
+          className="flex-1 sm:flex-none px-5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-sm flex items-center justify-center gap-2 cursor-pointer shadow-md transition-colors shrink-0"
+        >
+          <Download className="w-4 h-4 text-white" />
+          {lang === 'bn' ? 'ইনস্টল' : 'Install'}
+        </button>
+      </div>
     </div>
   )}
 

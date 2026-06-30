@@ -47,6 +47,7 @@ export default function App() {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [swipeGesturesEnabled, setSwipeGesturesEnabled] = useState(() => localStorage.getItem('swipe_gestures_enabled') !== 'false');
+  const [highlightedTxId, setHighlightedTxId] = useState<string | null>(null);
 
   const isQuickEntryOpenRef = React.useRef(isQuickEntryOpen);
   React.useEffect(() => {
@@ -387,10 +388,11 @@ export default function App() {
  );
  };
 
- // Nav helper
- const navigateToCustomer = (id: string) => {
- navigateTo('customers', id);
- };
+   // Nav helper
+  const navigateToCustomer = (id: string, replace = false) => {
+    setIsQuickEntryOpen(false);
+    navigateTo('customers', id, replace);
+  };
 
  if (authLoading) {
  return (
@@ -638,7 +640,9 @@ export default function App() {
  lang={lang}
  triggerConfirm={triggerConfirm}
  swipeGesturesEnabled={swipeGesturesEnabled}
- />
+   highlightedTxId={highlightedTxId}
+  setHighlightedTxId={setHighlightedTxId}
+  />
  )}
 
  {currentTab === 'reminders' && (
@@ -918,7 +922,11 @@ updateSettings={updateSettings}
  addTransaction={addTransaction}
  preselectedCustomerId={selectedCustomerIdForDetail || undefined}
  lang={lang}
- />
+   transactions={transactions}
+  onViewCustomer={navigateToCustomer}
+  highlightedTxId={highlightedTxId}
+  setHighlightedTxId={setHighlightedTxId}
+  />
 
  {/* APP CUSTOM HIGH-FIDELITY ALERT & CONFIRM MODALS */}
  {appDialog && appDialog.isOpen && (
@@ -928,7 +936,7 @@ updateSettings={updateSettings}
  initial={{ opacity: 0 }}
  animate={{ opacity: 1 }}
  onClick={() => { if (appDialog.type === 'alert') setAppDialog(null); }}
- className="absolute inset-0 bg-black/80 backdrop-blur-md"
+ className="absolute inset-0 bg-black/80"
  />
  
  {/* Modal Body Container */}

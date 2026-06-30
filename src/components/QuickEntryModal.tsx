@@ -1,40 +1,53 @@
 import React, { useState } from 'react';
-import { Customer } from '../types';
+import { Customer, Transaction } from '../types';
+import { motion, AnimatePresence } from 'motion/react';
 import { X, Search, UserPlus, Check, ArrowDownLeft, ArrowUpRight, ChevronLeft, AlertTriangle } from 'lucide-react';
 import { translations, formatNumber, formatIndianNumberString, Language } from '../lib/translations';
 import { toast } from 'sonner';
 
 interface QuickEntryModalProps {
- isOpen: boolean;
- onClose: () => void;
- customers: Customer[];
- createCustomer: (name: string, phone: string) => Promise<string | null | undefined>;
- addTransaction: (
- customerId: string, 
- type: 'due' | 'payment', 
- amount: number, 
- description: string,
- date?: Date,
- fallbackCustomerInfo?: { name: string; phone: string }
- ) => Promise<void>;
- preselectedCustomerId?: string;
- lang: Language;
+  isOpen: boolean;
+  onClose: () => void;
+  customers: Customer[];
+  transactions: Transaction[];
+  createCustomer: (name: string, phone: string) => Promise<string | null | undefined>;
+  addTransaction: (
+    customerId: string, 
+    type: 'due' | 'payment', 
+    amount: number, 
+    description: string,
+    date?: Date,
+    fallbackCustomerInfo?: { name: string; phone: string }
+  ) => Promise<void>;
+  preselectedCustomerId?: string;
+  onViewCustomer?: (id: string, replace?: boolean) => void;
+  lang: Language;
+  highlightedTxId?: string | null;
+  setHighlightedTxId?: (id: string | null) => void;
 }
 
 export default function QuickEntryModal({
- isOpen,
- onClose,
- customers,
- createCustomer,
- addTransaction,
- preselectedCustomerId,
- lang
+  isOpen,
+  onClose,
+  customers,
+  transactions,
+  createCustomer,
+  addTransaction,
+  preselectedCustomerId,
+  onViewCustomer,
+  lang,
+  highlightedTxId = null,
+  setHighlightedTxId = () => {}
 }: QuickEntryModalProps) {
  const t = translations[lang];
 
   const submitBtnRef = React.useRef<HTMLButtonElement>(null);
-  const formScrollRef = React.useRef<HTMLFormElement>(null);
- const [type, setType] = useState<'due' | 'payment'>('due');
+  const formScrollRef = React.useRef<HTMLDivElement>(null);
+  const [type, setType] = useState<'due' | 'payment'>('due');
+  const [duplicateTxWarning, setDuplicateTxWarning] = useState<Transaction | null>(null);
+  const [hasShownDuplicateWarning, setHasShownDuplicateWarning] = useState(false);
+
+
  const [searchQuery, setSearchQuery] = useState('');
  const [selectedCustomerId, setSelectedCustomerId] = useState(preselectedCustomerId || '');
  const [customerNameInput, setCustomerNameInput] = useState('');
@@ -83,92 +96,134 @@ export default function QuickEntryModal({
  setAmountInput(formatIndianNumberString(newVal));
  };
 
- const handleSave = async (e: React.FormEvent) => {
- e.preventDefault();
- setErrorMsg('');
+   const getDuplicate = () => {
+    if (!selectedCustomerId || !amountInput) return null;
+    const cleaned = amountInput.replace(/,/g, '');
+    const amountVal = parseFloat(cleaned);
+    if (isNaN(amountVal) || amountVal <= 0) return null;
 
- let custId = selectedCustomerId;
- const cleanedAmount = amountInput.replace(/,/g, '');
- const amountVal = parseFloat(cleanedAmount);
+    const parseDate = (d: any): Date => {
+      if (!d) return new Date();
+      if (d instanceof Date) return d;
+      if (typeof d.toDate === 'function') return d.toDate();
+      if (d.seconds !== undefined) return new Date(d.seconds * 1000);
+      const parsed = new Date(d);
+      return isNaN(parsed.getTime()) ? new Date() : parsed;
+    };
 
- if (!amountVal || amountVal <= 0) {
- setErrorMsg(lang === 'bn' ? 'অনুগ্রহ করে সঠিক পরিমাণ দিন (০ টাকার বেশি)' : 'Please enter a valid amount (greater than 0)');
- return;
- }
-
-  setIsSubmitting(true);
-  if (document.activeElement instanceof HTMLElement) {
-    document.activeElement.blur();
-  }
-  setTimeout(() => {
-    if (formScrollRef.current) {
-      formScrollRef.current.scrollTo({
-        top: formScrollRef.current.scrollHeight,
-        behavior: 'smooth'
+    const customerTxs = transactions
+      .filter(t => t.customerId === selectedCustomerId)
+      .sort((a, b) => {
+        const dateA = parseDate(a.createdAt || a.date);
+        const dateB = parseDate(b.createdAt || b.date);
+        return dateB.getTime() - dateA.getTime();
       });
+    const last5 = customerTxs.slice(0, 5);
+    const now = Date.now();
+    return last5.find(t => {
+      const tDate = parseDate(t.createdAt || t.date);
+      return t.type === type && 
+             Math.abs(t.amount - amountVal) < 0.01 && 
+             (now - tDate.getTime()) < 24 * 60 * 60 * 1000;
+    }) || null;
+  };
+
+  const executeSave = async (bypassDuplicateCheck = false) => {
+    setErrorMsg('');
+
+    let custId = selectedCustomerId;
+    const cleanedAmount = amountInput.replace(/,/g, '');
+    const amountVal = parseFloat(cleanedAmount);
+
+    if (!amountVal || amountVal <= 0) {
+      setErrorMsg(lang === 'bn' ? 'অনুগ্রহ করে সঠিক পরিমাণ দিন (০ টাকার বেশি)' : 'Please enter a valid amount (greater than 0)');
+      return;
     }
-  }, 150);
- try {
- if (showAddNewCustomer) {
- if (!customerNameInput.trim()) {
- setErrorMsg(lang === 'bn' ? 'গ্রাহকের নাম খালি থাকতে পারবে না' : 'Customer name cannot be empty');
- setIsSubmitting(false);
- return;
- }
- 
- try {
- // Create customer first
- const newId = await createCustomer(customerNameInput, customerPhoneInput);
- if (newId) {
- custId = newId;
- } else {
- throw new Error('Failed to create customer');
- }
- } catch (err: any) {
- if (err.message === 'DUPLICATE_NAME') {
- setErrorMsg(lang === 'bn' ? 'এই নামের গ্রাহক ইতিমধ্যে খতিয়ানে সংরক্ষিত আছে।' : 'A customer with this name already exists.');
- } else {
- setErrorMsg(lang === 'bn' ? 'গ্রাহক তৈরি করতে সমস্যা হয়েছে।' : 'Failed to create customer.');
- }
- setIsSubmitting(false);
- return;
- }
- }
 
- if (!custId) {
- setErrorMsg(lang === 'bn' ? 'অনুগ্রহ করে একজন গ্রাহক নির্বাচন করুন বা নতুনভাবে যুক্ত করুন' : 'Please select or add a customer first');
- setIsSubmitting(false);
- return;
- }
+    if (!bypassDuplicateCheck && !hasShownDuplicateWarning) {
+      const duplicate = getDuplicate();
+      if (duplicate) {
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+        setDuplicateTxWarning(duplicate);
+        return;
+      }
+    }
 
- // Pass fallbackCustomerInfo to bypass React state re-render delay
- const fallbackCustomer = showAddNewCustomer 
- ? { name: customerNameInput, phone: customerPhoneInput } 
- : undefined;
+    setIsSubmitting(true);
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
 
- await Promise.all([
- addTransaction(custId, type, amountVal, description, new Date(), fallbackCustomer),
- new Promise(resolve => setTimeout(resolve, 600))
- ]);
- 
- // Reset & Close
- setType('due');
- setSearchQuery('');
- setSelectedCustomerId('');
- setCustomerNameInput('');
- setCustomerPhoneInput('');
- setShowAddNewCustomer(false);
- setAmountInput('');
- setDescription('');
- onClose();
- toast.success(lang === 'bn' ? 'হিসাব সফলভাবে যোগ হয়েছে' : 'Transaction saved successfully');
- } catch (err) {
- console.error(err);
- setErrorMsg(lang === 'bn' ? 'হিসাব সংরক্ষণে ত্রুটি ঘটেছে। পুনরায় চেষ্টা করুন।' : 'Error saving. Please check connection and try again.');
- } finally {
- setIsSubmitting(false);
- }
- };
+    try {
+      if (showAddNewCustomer) {
+        if (!customerNameInput.trim()) {
+          setErrorMsg(lang === 'bn' ? 'গ্রাহকের নাম খালি থাকতে পারবে না' : 'Customer name cannot be empty');
+          setIsSubmitting(false);
+          return;
+        }
+        
+        try {
+          // Create customer first
+          const newId = await createCustomer(customerNameInput, customerPhoneInput);
+          if (newId) {
+            custId = newId;
+          } else {
+            throw new Error('Failed to create customer');
+          }
+        } catch (err: any) {
+          if (err.message === 'DUPLICATE_NAME') {
+            setErrorMsg(lang === 'bn' ? 'এই নামের গ্রাহক ইতিমধ্যে খতিয়ানে সংরক্ষিত আছে।' : 'A customer with this name already exists.');
+          } else {
+            setErrorMsg(lang === 'bn' ? 'গ্রাহক তৈরি করতে সমস্যা হয়েছে।' : 'Failed to create customer.');
+          }
+          setIsSubmitting(false);
+          return;
+        }
+      }
+
+      if (!custId) {
+        setErrorMsg(lang === 'bn' ? 'অনুগ্রহ করে একজন গ্রাহক নির্বাচন করুন বা নতুনভাবে যুক্ত করুন' : 'Please select or add a customer first');
+        setIsSubmitting(false);
+        return;
+      }
+
+      // Pass fallbackCustomerInfo to bypass React state re-render delay
+      const fallbackCustomer = showAddNewCustomer 
+        ? { name: customerNameInput, phone: customerPhoneInput } 
+        : undefined;
+
+      await Promise.all([
+        addTransaction(custId, type, amountVal, description, new Date(), fallbackCustomer),
+        new Promise(resolve => setTimeout(resolve, 600))
+      ]);
+      
+      // Reset & Close
+      setType('due');
+      setSearchQuery('');
+      setSelectedCustomerId('');
+      setCustomerNameInput('');
+      setCustomerPhoneInput('');
+      setShowAddNewCustomer(false);
+      setAmountInput('');
+      setDescription('');
+      setDuplicateTxWarning(null);
+      setHasShownDuplicateWarning(false);
+      onClose();
+      toast.success(lang === 'bn' ? 'হিসাব সফলভাবে যোগ হয়েছে' : 'Transaction saved successfully');
+    } catch (err) {
+      console.error(err);
+      setErrorMsg(lang === 'bn' ? 'হিসাব সংরক্ষণে ত্রুটি ঘটেছে। পুনরায় চেষ্টা করুন।' : 'Error saving. Please check connection and try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await executeSave(false);
+  };
 
  if (!isOpen) return null;
 
@@ -180,7 +235,7 @@ export default function QuickEntryModal({
  {/* Header */}
  <div className="p-5 border-b border-zinc-100 dark:border-zinc-800 flex items-center justify-between bg-zinc-50 dark:bg-zinc-900/50">
  <h3 className="text-xl font-bold text-zinc-900 dark:text-white flex items-center gap-2">
- <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+ 
  {t.quickEntryTitle}
  </h3>
  <button 
@@ -193,9 +248,11 @@ export default function QuickEntryModal({
  </button>
  </div>
 
- <form ref={formScrollRef} onSubmit={handleSave} className="flex-1 overflow-y-auto hide-scrollbar p-5 space-y-6">
- 
- {/* 1. ENTRY TYPE SELECTION (GIANT BUTTONS) */}
+ <form onSubmit={handleSave} className="flex-1 flex flex-col overflow-hidden">
+            
+            {/* Scrollable Form Fields */}
+            <div ref={formScrollRef} className="flex-1 overflow-y-auto hide-scrollbar p-5 space-y-6">
+{/* 1. ENTRY TYPE SELECTION (GIANT BUTTONS) */}
  <div className="space-y-2">
  <span className="text-xs font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider block">
  {t.chooseType}
@@ -371,6 +428,13 @@ export default function QuickEntryModal({
  />
  </div>
 
+              {!isSubmitting && getDuplicate() && (
+                <p className="text-xs font-bold text-amber-600 dark:text-amber-500 mt-1.5 flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  {t.duplicateRealtimeWarning}
+                </p>
+              )}
+
  {type === 'payment' && currentCustomer && (currentCustomer as any).outstandingDue > 0 && (
     <div className="flex items-center gap-2 mt-3 p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-xl border border-zinc-200 dark:border-zinc-800">
       <input
@@ -428,43 +492,128 @@ export default function QuickEntryModal({
  />
  </div>
 
- {/* Error Message */}
-  {errorMsg && (
-  <div className="p-4 bg-rose-50 dark:bg-rose-950/20 rounded-xl text-rose-600 dark:text-rose-400 font-semibold text-sm flex items-start gap-2">
-    <AlertTriangle className="w-4.5 h-4.5 text-amber-500 shrink-0 mt-0.5" />
-    <span>{errorMsg}</span>
-  </div>
+ </div>
+
+            {/* Error Message & Actions Submit sticky bottom navbar */}
+            <div className="p-5 border-t border-zinc-100 dark:border-zinc-800 bg-white dark:bg-zinc-900 shrink-0">
+              {errorMsg && (
+                <div className="p-4 mb-4 bg-rose-50 dark:bg-rose-955/20 rounded-xl text-rose-600 dark:text-rose-400 font-semibold text-sm flex items-start gap-2">
+                  <AlertTriangle className="w-4.5 h-4.5 text-amber-500 shrink-0 mt-0.5" />
+                  <span>{errorMsg}</span>
+                </div>
+              )}
+
+              <button
+                ref={submitBtnRef}
+                type="submit"
+                disabled={isSubmitting}
+                className={`w-full py-4.5 rounded-2xl font-extrabold text-lg flex items-center justify-center shadow-lg transition-all cursor-pointer ${
+                  type === 'due' 
+                    ? 'bg-rose-600 hover:bg-rose-700 text-white dark:bg-rose-500 dark:hover:bg-rose-400 dark:text-zinc-950 shadow-rose-200 dark:shadow-none' 
+                    : 'bg-emerald-600 hover:bg-emerald-700 text-white dark:bg-emerald-500 dark:hover:bg-emerald-400 dark:text-zinc-950 shadow-emerald-200 dark:shadow-none'
+                } ${isSubmitting ? 'opacity-70 cursor-not-allowed' : ''}`}
+                id="save_transaction_btn"
+              >
+                {isSubmitting ? (
+                  <span className="flex items-center gap-2">
+                    <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    {t.speedyNotice}
+                  </span>
+                ) : (
+                  type === 'due' ? t.confirmGive : t.confirmReceive
+                )}
+              </button>
+            </div>
+
+          </form>
+ </div>
+  {/* Duplicate Entry Warning Modal */}
+  {duplicateTxWarning && (
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80">
+      <motion.div
+        initial={{ opacity: 0, y: 50 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: 50 }}
+        className="bg-white dark:bg-zinc-900 w-full sm:max-w-sm rounded-t-3xl sm:rounded-3xl shadow-2xl p-6 relative"
+      >
+        <div className="text-center mb-6">
+          <div className="w-16 h-16 bg-amber-100 dark:bg-amber-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
+            <AlertTriangle className="w-8 h-8 text-amber-600 dark:text-amber-500" />
+          </div>
+          <h3 className="text-lg font-black text-amber-600 dark:text-amber-500 mb-2">
+            {t.duplicateWarningTitle}
+          </h3>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            {t.duplicateWarningDesc}
+          </p>
+          
+          {/* Details Card */}
+          <div className="bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 text-left space-y-2.5 mt-4">
+            <div className="flex justify-between items-baseline">
+              <span className="text-xs font-bold text-zinc-400 dark:text-zinc-500 uppercase">{t.type}</span>
+              <span className={`text-xs font-black px-2.5 py-0.5 rounded-full ${
+                duplicateTxWarning.type === 'due' 
+                  ? 'bg-rose-100 text-rose-600 dark:bg-rose-955/40 dark:text-rose-400' 
+                  : 'bg-cyan-100 text-cyan-600 dark:bg-cyan-955/40 dark:text-cyan-400'
+              }`}>
+                {duplicateTxWarning.type === 'due' ? t.duePlus : t.paymentMinus}
+              </span>
+            </div>
+            <div className="flex justify-between items-baseline">
+              <span className="text-xs font-bold text-zinc-400 dark:text-zinc-500 uppercase">{t.amount}</span>
+              <span className={`text-sm font-black ${
+                duplicateTxWarning.type === 'due' ? 'text-rose-600 dark:text-rose-505' : 'text-cyan-600 dark:text-cyan-400'
+              }`}>
+                ৳ {formatNumber(duplicateTxWarning.amount, lang)}
+              </span>
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-col gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              if (setHighlightedTxId) {
+                setHighlightedTxId(duplicateTxWarning.id);
+              }
+              setDuplicateTxWarning(null);
+              if (onViewCustomer) {
+                onViewCustomer(selectedCustomerId, true);
+              } else {
+                onClose();
+              }
+            }}
+            className="w-full py-4 bg-zinc-900 hover:bg-zinc-850 dark:bg-zinc-100 dark:hover:bg-zinc-200 text-white dark:text-zinc-900 font-bold rounded-xl cursor-pointer text-center"
+          >
+            {t.viewExistingEntry}
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              setHasShownDuplicateWarning(true);
+              setDuplicateTxWarning(null);
+              await executeSave(true);
+            }}
+            className="w-full py-4 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-300 font-bold rounded-xl cursor-pointer"
+          >
+            {t.addAnyway}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setDuplicateTxWarning(null);
+            }}
+            className="w-full py-4 bg-zinc-50 dark:bg-zinc-900 hover:bg-zinc-100 dark:hover:bg-zinc-800 border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400 font-bold rounded-xl cursor-pointer"
+          >
+            {t.cancel}
+          </button>
+        </div>
+      </motion.div>
+    </div>
   )}
-
- {/* Actions Submit */}
- <div className="pt-4 pb-2">
- <button
-  ref={submitBtnRef}
-  type="submit"
- disabled={isSubmitting}
- className={`w-full py-4.5 rounded-2xl font-extrabold text-lg flex items-center justify-center shadow-lg transition-all cursor-pointer ${
- type === 'due' 
- ? 'bg-rose-600 hover:bg-rose-700 text-white dark:bg-rose-500 dark:hover:bg-rose-400 dark:text-zinc-950 shadow-rose-200 dark:shadow-none' 
- : 'bg-emerald-600 hover:bg-emerald-700 text-white dark:bg-emerald-500 dark:hover:bg-emerald-400 dark:text-zinc-950 shadow-emerald-200 dark:shadow-none'
- } ${isSubmitting ? 'opacity-70 cursor-not-allowed' : ''}`}
- id="save_transaction_btn"
- >
- {isSubmitting ? (
- <span className="flex items-center gap-2">
- <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
- <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
- <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
- </svg>
- {t.speedyNotice}
- </span>
- ) : (
- type === 'due' ? t.confirmGive : t.confirmReceive
- )}
- </button>
- </div>
-
- </form>
- </div>
  </div>
  );
 }
