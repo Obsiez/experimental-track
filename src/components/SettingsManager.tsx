@@ -217,7 +217,7 @@ export default function SettingsManager({
  </h2>
  <p className="text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed">
  {lang === 'bn' 
- ? 'ইজি ডিউ ট্র্যাকারকে আপনার সুবিধাজনক আলোতে রূপ দিন। কাজের ক্ষেত্র উজ্জ্বল রোদে বা রাতে চোখের সুরক্ষায় আরামদায়ক থিম ব্যবহার করুন।' 
+  ? 'চালান ট্র্যাককে আপনার সুবিধাজনক আলোতে রূপ দিন। কাজের ক্ষেত্র উজ্জ্বল রোদে বা রাতে চোখের সুরক্ষায় আরামদায়ক থিম ব্যবহার করুন।' 
  : 'Tailor Challan Track to the most comforting view. Perfect for outdoor sunny fields or dark indoor offices.'}
  </p>
 

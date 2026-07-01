@@ -2,8 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Customer, Transaction } from '../types';
 import { 
   Users, Search, UserPlus, Phone, ArrowUpRight, ArrowDownLeft, Trash2, 
-  X, MessageSquare, Send, ReceiptText, ArrowLeft, Pencil, ChevronDown, ChevronUp, AlertTriangle
-} from 'lucide-react';
+  X, MessageSquare, Send, ReceiptText, ArrowLeft, Pencil, ChevronDown, ChevronUp, AlertTriangle, ArrowUpDown, Pin } from 'lucide-react';
 import { motion, AnimatePresence, useAnimation } from 'motion/react';
 import { translations, formatNumber, formatIndianNumberString, Language } from '../lib/translations';
 import { triggerHaptic } from '../lib/haptics';
@@ -263,7 +262,31 @@ export default function CustomerManager({
  const [selectedTemplate, setSelectedTemplate] = useState<1 | 2 | 3>(1);
 
  // Transaction Edit/Delete Modal states
- const [editingTx, setEditingTx] = useState<Transaction | null>(null);
+ 
+  const [phoneWarningCustomer, setPhoneWarningCustomer] = useState<Customer | null>(null);
+  const [pinActionCustomer, setPinActionCustomer] = useState<Customer | null>(null);
+  const [sortBy, setSortBy] = useState<'recent' | 'high_balance' | 'low_balance'>('recent');
+  const [isSortOpen, setIsSortOpen] = useState(false);
+  const [pinnedCustomerIds, setPinnedCustomerIds] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('pinned_customers') || '[]');
+    } catch (e) {
+      return [];
+    }
+  });
+
+  const longPressTimer = React.useRef<any>(null);
+  const isLongPressActive = React.useRef(false);
+
+  const togglePinCustomer = (id: string) => {
+    triggerHaptic('single');
+    setPinnedCustomerIds(prev => {
+      const updated = prev.includes(id) ? prev.filter(pid => pid !== id) : [...prev, id];
+      localStorage.setItem('pinned_customers', JSON.stringify(updated));
+      return updated;
+    });
+  };
+const [editingTx, setEditingTx] = useState<Transaction | null>(null);
  const [editTxAmount, setEditTxAmount] = useState('');
  const [editTxDesc, setEditTxDesc] = useState('');
  const [deletingTx, setDeletingTx] = useState<Transaction | null>(null);
@@ -286,7 +309,7 @@ export default function CustomerManager({
 
   // Disable background scrolling when any modal popup is active
   React.useEffect(() => {
-    if (deletingCustomer || editingTx || deletingTx || duplicateTxWarning) {
+    if (deletingCustomer || editingTx || deletingTx || duplicateTxWarning || phoneWarningCustomer || pinActionCustomer) {
       document.body.style.overflow = 'hidden';
     } else {
       document.body.style.overflow = '';
@@ -294,7 +317,7 @@ export default function CustomerManager({
     return () => {
       document.body.style.overflow = '';
     };
-  }, [deletingCustomer, editingTx, deletingTx, duplicateTxWarning]);
+  }, [deletingCustomer, editingTx, deletingTx, duplicateTxWarning, phoneWarningCustomer, pinActionCustomer]);
 
    // Handle history for modals (mobile back gesture)
   React.useEffect(() => {
@@ -627,68 +650,136 @@ export default function CustomerManager({
  />
  </div>
 
- {/* Simple 3-Way balance category filter chips row for father's speedy control */}
- <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs no-scrollbar">
- <button
- type="button"
- onClick={() => setFilterStatus('all')}
- className={`px-4 py-2.5 rounded-xl font-bold transition-colors shrink-0 cursor-pointer ${
- filterStatus === 'all'
- ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900'
- : 'bg-white text-zinc-650 border border-zinc-200 dark:bg-zinc-900 dark:text-zinc-450 dark:border-zinc-800'
- }`}
- >
- {lang === 'bn' ? 'সব গ্রাহক' : 'All Customers'} ({formatNumber(customers.length, lang)})
- </button>
- <button
- type="button"
- onClick={() => setFilterStatus('due')}
- className={`px-4 py-2.5 rounded-xl font-bold transition-colors shrink-0 cursor-pointer ${
- filterStatus === 'due'
- ? 'bg-rose-600 text-white shadow-md'
- : 'bg-white text-rose-600 border border-rose-200 dark:bg-zinc-900 dark:border-rose-950/40 dark:text-rose-400'
- }`}
- >
- {lang === 'bn' ? 'বকেয়া খতিয়ান' : 'Has Outstanding'} ({formatNumber(customers.filter(c => c.outstandingDue > 0).length, lang)})
- </button>
- <button
- type="button"
- onClick={() => setFilterStatus('settled')}
- className={`px-4 py-2.5 rounded-xl font-bold transition-colors shrink-0 cursor-pointer ${
- filterStatus === 'settled'
- ? 'bg-emerald-600 text-white shadow-md'
- : 'bg-white text-emerald-650 border border-emerald-500 dark:bg-zinc-900 dark:border-emerald-950/40 dark:text-emerald-400'
- }`}
- >
- {lang === 'bn' ? 'পরিশোধিত/০ টাকা' : 'Settled (৳0)'} ({formatNumber(customers.filter(c => c.outstandingDue === 0).length, lang)})
- </button>
- <button
- type="button"
- onClick={() => setFilterStatus('overpaid')}
- className={`px-4 py-2.5 rounded-xl font-bold transition-colors shrink-0 cursor-pointer ${
- filterStatus === 'overpaid'
- ? 'bg-cyan-600 text-white shadow-md'
- : 'bg-white text-cyan-650 border border-cyan-500 dark:bg-zinc-900 dark:border-cyan-950/40 dark:text-cyan-400'
- }`}
- >
- {lang === 'bn' ? 'অতিরিক্ত জমা' : 'Overpaid'} ({formatNumber(customers.filter(c => c.outstandingDue < 0).length, lang)})
- </button>
- </div>
+ {/* Filter Tabs & Sticky Sort Dropdown */}
+  <div className="flex items-center gap-2 mb-3 relative select-none">
+    {/* Always visible Sort Button on the left */}
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => {
+          triggerHaptic('single');
+          setIsSortOpen(!isSortOpen);
+        }}
+        className="px-3.5 py-2.5 rounded-xl font-extrabold border border-zinc-200 dark:border-zinc-800 bg-zinc-50 hover:bg-zinc-150 dark:bg-zinc-800 dark:hover:bg-zinc-755 text-zinc-700 dark:text-zinc-300 flex items-center gap-1 cursor-pointer transition-colors shadow-sm"
+      >
+        <ArrowUpDown className="w-3.5 h-3.5" />
+        <span>{lang === 'bn' ? 'সাজান' : 'Sort'}</span>
+      </button>
 
- {/* Customer list database */}
+      {/* Sort options Dropdown overlay */}
+      {isSortOpen && (
+        <>
+          <div 
+            className="fixed inset-0 z-40" 
+            onClick={() => setIsSortOpen(false)} 
+          />
+          <div className="absolute left-0 mt-1.5 w-44 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-xl z-50 py-1.5 animate-in fade-in slide-in-from-top-1 duration-100">
+            <button
+              type="button"
+              onClick={() => {
+                triggerHaptic('single');
+                setSortBy('recent');
+                setIsSortOpen(false);
+              }}
+              className="w-full text-left px-3.5 py-2 text-xs font-bold transition-colors cursor-pointer text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+            >
+              {lang === 'bn' ? 'সাম্প্রতিক (Recent)' : 'Recent'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                triggerHaptic('single');
+                setSortBy('high_balance');
+                setIsSortOpen(false);
+              }}
+              className="w-full text-left px-3.5 py-2 text-xs font-bold transition-colors cursor-pointer text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+            >
+              {lang === 'bn' ? 'বেশি বাকি (High Due)' : 'High Balance'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                triggerHaptic('single');
+                setSortBy('low_balance');
+                setIsSortOpen(false);
+              }}
+              className="w-full text-left px-3.5 py-2 text-xs font-bold transition-colors cursor-pointer text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800"
+            >
+              {lang === 'bn' ? 'কম বাকি (Low Due)' : 'Low Balance'}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+
+    {/* Scrollable Filter Tabs wrapper */}
+    <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs no-scrollbar flex-1">
+      <button
+        type="button"
+        onClick={() => { triggerHaptic('single'); setFilterStatus('all'); }}
+        className={`px-4 py-2.5 rounded-xl font-bold transition-colors shrink-0 cursor-pointer ${
+          filterStatus === 'all'
+            ? 'bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 shadow-md'
+            : 'bg-white text-zinc-655 border border-zinc-200 dark:bg-zinc-900 dark:border-zinc-800'
+        }`}
+      >
+        {lang === 'bn' ? 'সব গ্রাহক' : 'All'} ({formatNumber(customers.length, lang)})
+      </button>
+      <button
+        type="button"
+        onClick={() => { triggerHaptic('single'); setFilterStatus('due'); }}
+        className={`px-4 py-2.5 rounded-xl font-bold transition-colors shrink-0 cursor-pointer ${
+          filterStatus === 'due'
+            ? 'bg-rose-600 text-white shadow-md'
+            : 'bg-white text-rose-600 border border-rose-200 dark:bg-zinc-900 dark:border-rose-950/40 dark:text-rose-400'
+        }`}
+      >
+        {lang === 'bn' ? 'বকেয়া খতিয়ান' : 'Has Outstanding'} ({formatNumber(customers.filter(c => c.outstandingDue > 0).length, lang)})
+      </button>
+      <button
+        type="button"
+        onClick={() => { triggerHaptic('single'); setFilterStatus('settled'); }}
+        className={`px-4 py-2.5 rounded-xl font-bold transition-colors shrink-0 cursor-pointer ${
+          filterStatus === 'settled'
+            ? 'bg-emerald-600 text-white shadow-md'
+            : 'bg-white text-emerald-650 border border-emerald-500 dark:bg-zinc-900 dark:border-emerald-950/40 dark:text-emerald-400'
+        }`}
+      >
+        {lang === 'bn' ? 'পরিশোধিত/০ টাকা' : 'Settled (৳0)'} ({formatNumber(customers.filter(c => c.outstandingDue === 0).length, lang)})
+      </button>
+      <button
+        type="button"
+        onClick={() => { triggerHaptic('single'); setFilterStatus('overpaid'); }}
+        className={`px-4 py-2.5 rounded-xl font-bold transition-colors shrink-0 cursor-pointer ${
+          filterStatus === 'overpaid'
+            ? 'bg-cyan-600 text-white shadow-md'
+            : 'bg-white text-cyan-650 border border-cyan-500 dark:bg-zinc-900 dark:border-cyan-950/40 dark:text-cyan-400'
+        }`}
+      >
+        {lang === 'bn' ? 'অতিরিক্ত জমা' : 'Overpaid'} ({formatNumber(customers.filter(c => c.outstandingDue < 0).length, lang)})
+      </button>
+    </div>
+  </div>
+
+  {/* Customer list database */}
  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
  {filteredCustomers.map(c => (
 		<SwipeableCustomerItem
 			key={c.id}
 			customer={c}
 			lang={lang}
-			onClick={() => setSelectedCustomerId(selectedCustomerId === c.id ? null : c.id)}
 			isSelected={selectedCustomerId === c.id}
 			swipeGesturesEnabled={swipeGesturesEnabled}
 			isDeleting={deletingCustomer?.id === c.id}
 			onWhatsApp={() => {
-				triggerHaptic('single');
-				window.open(getShareLink(c, 'whatsapp'), '_blank');
+				if (!c.phone || !c.phone.trim()) {
+					triggerHaptic('double');
+					window.history.pushState({ modal: 'phoneWarningCustomer' }, '');
+					setPhoneWarningCustomer(c);
+				} else {
+					triggerHaptic('single');
+					window.open(getShareLink(c, 'whatsapp'), '_blank');
+				}
 			}}
 			onDelete={() => {
 				triggerHaptic('double');
@@ -696,6 +787,43 @@ export default function CustomerManager({
 			}}
 		>
 			<div
+				onTouchStart={() => {
+					isLongPressActive.current = false;
+					longPressTimer.current = setTimeout(() => {
+						isLongPressActive.current = true;
+						triggerHaptic('double');
+						window.history.pushState({ modal: 'pinActionCustomer' }, '');
+						setPinActionCustomer(c);
+					}, 600);
+				}}
+				onTouchEnd={() => {
+					if (longPressTimer.current) clearTimeout(longPressTimer.current);
+				}}
+				onTouchMove={() => {
+					if (longPressTimer.current) clearTimeout(longPressTimer.current);
+				}}
+				onMouseDown={() => {
+					isLongPressActive.current = false;
+					longPressTimer.current = setTimeout(() => {
+						isLongPressActive.current = true;
+						triggerHaptic('double');
+						window.history.pushState({ modal: 'pinActionCustomer' }, '');
+						setPinActionCustomer(c);
+					}, 600);
+				}}
+				onMouseUp={() => {
+					if (longPressTimer.current) clearTimeout(longPressTimer.current);
+				}}
+				onMouseLeave={() => {
+					if (longPressTimer.current) clearTimeout(longPressTimer.current);
+				}}
+				onClick={() => {
+					if (isLongPressActive.current) {
+						isLongPressActive.current = false;
+						return;
+					}
+					setSelectedCustomerId(selectedCustomerId === c.id ? null : c.id);
+				}}
 				className={`bg-white dark:bg-zinc-900 border p-5 rounded-2xl shadow-md hover:shadow-md transition-all cursor-pointer flex items-center justify-between group ${
 					selectedCustomerId === c.id 
 						? 'border-emerald-500 ring-2 ring-emerald-500/20 dark:ring-emerald-400/20' 
@@ -703,8 +831,11 @@ export default function CustomerManager({
 				}`}
 			>
 				<div className="min-w-0 pr-2">
-					<div className="text-lg font-bold text-zinc-800 dark:text-zinc-100 truncate group-hover:text-emerald-600 transition-colors">
-						{c.name}
+					<div className="text-lg font-bold text-zinc-800 dark:text-zinc-100 truncate group-hover:text-emerald-600 transition-colors flex items-center gap-1.5">
+						{pinnedCustomerIds.includes(c.id) && (
+							<Pin className="w-3.5 h-3.5 text-amber-500 fill-amber-500 rotate-45 shrink-0" />
+						)}
+						<span className="truncate">{c.name}</span>
 					</div>
 					<div className="text-xs text-zinc-500 dark:text-zinc-400 font-medium flex items-center gap-1.5 mt-1">
 						<Phone className="w-3 h-3 shrink-0" />
@@ -719,13 +850,14 @@ export default function CustomerManager({
 							? 'text-rose-600 dark:text-rose-455' 
 							: c.outstandingDue < 0 
 								? 'text-cyan-600 dark:text-cyan-400' 
-								: 'text-zinc-400 dark:text-zinc-500'
+								: 'text-zinc-400 dark:text-zinc-505'
 					}`}>
 						৳ {formatNumber(c.outstandingDue || 0, lang)}
 					</div>
 				</div>
 			</div>
 		</SwipeableCustomerItem>
+	
 	))}
 
  {filteredCustomers.length === 0 && (
@@ -765,21 +897,32 @@ export default function CustomerManager({
  {/* Ambient decorative gradient corner inside dark mode */}
  <div className="absolute right-0 top-0 translate-x-12 -translate-y-12 bg-emerald-500/5 w-48 h-48 rounded-full blur-2xl hidden dark:block pointer-events-none"></div>
  
- {/* Edit Button on the Top Right Side of the Card */}
- {!isEditingCustomer && (
- <button
- onClick={() => {
- setEditName(selectedCustomer.name);
- setEditPhone(selectedCustomer.phone || '');
- setEditError('');
- setIsEditingCustomer(true);
- }}
- className="absolute right-4 top-4 p-2 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-750 text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 rounded-full transition-all cursor-pointer z-25 flex items-center justify-center shadow-md"
- title={lang === 'bn' ? 'তথ্য পরিবর্তন করুন' : 'Edit Customer Info'}
- >
- <Pencil className="w-4 h-4" />
- </button>
- )}
+ {/* Edit and Pin Buttons on the Top Right Side of the Card */}
+  {!isEditingCustomer && (
+    <div className="absolute right-4 top-4 flex items-center gap-2 z-25">
+      <button
+        type="button"
+        onClick={() => togglePinCustomer(selectedCustomer.id)}
+        className="p-2 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-755 text-zinc-655 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 rounded-full transition-all cursor-pointer flex items-center justify-center shadow-md animate-in fade-in"
+        title={pinnedCustomerIds.includes(selectedCustomer.id) ? (lang === 'bn' ? 'আনপিন করুন' : 'Unpin Customer') : (lang === 'bn' ? 'পিন করুন' : 'Pin Customer')}
+      >
+        <Pin className={`w-4 h-4 ${pinnedCustomerIds.includes(selectedCustomer.id) ? 'text-amber-500 fill-amber-500 rotate-45' : 'text-zinc-500 dark:text-zinc-400'}`} />
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          setEditName(selectedCustomer.name);
+          setEditPhone(selectedCustomer.phone || '');
+          setEditError('');
+          setIsEditingCustomer(true);
+        }}
+        className="p-2 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-755 text-zinc-655 border border-zinc-200 dark:border-zinc-700 rounded-full transition-all cursor-pointer flex items-center justify-center shadow-md"
+        title={lang === 'bn' ? 'তথ্য পরিবর্তন করুন' : 'Edit Customer Info'}
+      >
+        <Pencil className="w-4 h-4" />
+      </button>
+    </div>
+  )}
 
  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative z-10 pt-2">
  {isEditingCustomer ? (
@@ -802,8 +945,9 @@ export default function CustomerManager({
  {lang === 'bn' ? 'মোবাইল নম্বর' : 'Mobile Number'}
  </label>
  <input
- type="text"
- value={editPhone}
+      type="number"
+      id="edit_customer_phone"
+      value={editPhone}
  onChange={(e) => setEditPhone(e.target.value)}
  className="w-full px-3 py-2.5 border border-zinc-200 dark:border-zinc-700 rounded-xl bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-white focus:outline-none focus:outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500 text-base font-extrabold"
  placeholder={lang === 'bn' ? 'যেমন: ০১৭...' : 'e.g. 017...'}
@@ -1053,23 +1197,28 @@ export default function CustomerManager({
               )}
 
               {openActionType === 'payment' && selectedCustomer && selectedCustomer.outstandingDue > 0 && (
-                <div className="flex items-center gap-2 mt-2.5 p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-xl border border-zinc-200 dark:border-zinc-800">
+                <div 
+                  onClick={() => {
+                    triggerHaptic('single');
+                    const targetDue = selectedCustomer.outstandingDue;
+                    const isChecked = actionAmount.replace(/,/g, '') === targetDue.toString();
+                    if (!isChecked) {
+                      setActionAmount(formatIndianNumberString(targetDue.toString()));
+                    } else {
+                      setActionAmount('');
+                    }
+                  }}
+                  className="w-full flex items-center text-left gap-2 mt-2.5 p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-xl border border-zinc-200 dark:border-zinc-800 cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-850/50 transition-colors select-none"
+                >
                   <input
                     type="checkbox"
-                    id="payFullDueInline"
-                    className="w-4 h-4 text-emerald-600 rounded border-zinc-300 focus:ring-emerald-500 cursor-pointer"
+                    className="w-4 h-4 text-emerald-600 rounded border-zinc-300 focus:ring-emerald-500 cursor-pointer pointer-events-none"
                     checked={actionAmount.replace(/,/g, '') === selectedCustomer.outstandingDue.toString()}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setActionAmount(formatIndianNumberString(selectedCustomer.outstandingDue.toString()));
-                      } else {
-                        setActionAmount('');
-                      }
-                    }}
+                    readOnly
                   />
-                  <label htmlFor="payFullDueInline" className="text-xs font-bold text-zinc-600 dark:text-zinc-400 cursor-pointer select-none">
+                  <span className="text-xs font-bold text-zinc-650 dark:text-zinc-200 select-none font-bold">
                     {lang === 'bn' ? 'সম্পূর্ণ বকেয়া পরিশোধ করুন' : 'Settle complete due'} (৳{formatNumber(selectedCustomer.outstandingDue, lang)})
-                  </label>
+                  </span>
                 </div>
               )}
 
@@ -1407,6 +1556,140 @@ export default function CustomerManager({
   )}
 
 
+  {/* Phone Warning Modal (Amber-themed warning modal) */}
+  {phoneWarningCustomer && (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80">
+      <motion.div
+        initial={{ opacity: 0, y: 50 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-white dark:bg-zinc-900 w-full sm:max-w-sm rounded-t-3xl sm:rounded-3xl shadow-2xl p-6"
+      >
+        <div className="text-center mb-6">
+          <div className="w-16 h-16 bg-amber-100 dark:bg-amber-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Phone className="w-8 h-8 text-amber-600 dark:text-amber-500" />
+          </div>
+          <h3 className="text-lg font-black text-amber-600 dark:text-amber-500 mb-2">
+            {lang === 'bn' ? 'মোবাইল নম্বর নেই' : 'No Phone Number'}
+          </h3>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400 font-semibold leading-relaxed">
+            {lang === 'bn' 
+              ? 'হোয়াটসঅ্যাপ রিমাইন্ডার পাঠাতে অনুগ্রহ করে প্রথমে এই গ্রাহকের প্রোফাইলে একটি মোবাইল নম্বর যুক্ত করুন।' 
+              : 'Please add/link a phone number to this customer profile first to send WhatsApp reminders.'}
+          </p>
+          
+          <div className="bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-4 text-left mt-4 flex justify-between items-baseline">
+            <span className="text-xs font-bold text-zinc-400 dark:text-zinc-500 uppercase">{lang === 'bn' ? 'গ্রাহক' : 'Customer'}</span>
+            <span className="text-sm font-extrabold text-zinc-850 dark:text-zinc-150 truncate max-w-[200px]">{phoneWarningCustomer.name}</span>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <button
+            onClick={() => {
+              const targetCustomer = phoneWarningCustomer;
+              
+              // Instead of calling window.history.back() which triggers popstate and resets state,
+              // we replace the current warning modal history state with the customer's detail state!
+              if (window.history.state?.modal === 'phoneWarningCustomer') {
+                window.history.replaceState({ tab: 'customers', customerId: targetCustomer.id, quickEntry: false }, '', `?tab=customers&c=${targetCustomer.id}`);
+              }
+              
+              setSelectedCustomerId(targetCustomer.id);
+              setPhoneWarningCustomer(null);
+              
+              // Open edit panel inline
+              setEditName(targetCustomer.name);
+              setEditPhone('');
+              setEditError('');
+              setIsEditingCustomer(true);
+              setTimeout(() => {
+                const phoneInput = document.getElementById('edit_customer_phone');
+                if (phoneInput) phoneInput.focus();
+              }, 150);
+            }}
+            className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl cursor-pointer transition-colors"
+          >
+            {lang === 'bn' ? 'মোবাইল নম্বর যুক্ত করুন' : 'Add Phone Number'}
+          </button>
+          <button
+            onClick={() => {
+              setPhoneWarningCustomer(null);
+              if (window.history.state?.modal === 'phoneWarningCustomer') {
+                window.history.back();
+              }
+            }}
+            className="w-full py-4 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-855 dark:text-zinc-300 font-bold rounded-xl cursor-pointer transition-colors"
+          >
+            {lang === 'bn' ? 'বাতিল' : 'Cancel'}
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  )}
+
+  {/* Pin Action Modal (Long Press action modal) */}
+  {pinActionCustomer && (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80 animate-in fade-in duration-200">
+      <motion.div
+        initial={{ opacity: 0, y: 50 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-white dark:bg-zinc-900 w-full sm:max-w-sm rounded-t-3xl sm:rounded-3xl shadow-2xl p-6"
+      >
+        <div className="text-center mb-6">
+          <div className="w-16 h-16 bg-amber-50 dark:bg-amber-900/20 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Pin className={`w-8 h-8 text-amber-500 ${pinnedCustomerIds.includes(pinActionCustomer.id) ? 'rotate-45 fill-amber-500' : ''}`} />
+          </div>
+          <h3 className="text-lg font-black text-zinc-900 dark:text-white mb-2">
+            {pinnedCustomerIds.includes(pinActionCustomer.id) 
+              ? (lang === 'bn' ? 'গ্রাহক আনপিন করুন' : 'Unpin Customer') 
+              : (lang === 'bn' ? 'গ্রাহক পিন করুন' : 'Pin Customer')}
+          </h3>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400 font-semibold leading-relaxed">
+            {pinnedCustomerIds.includes(pinActionCustomer.id)
+              ? (lang === 'bn' 
+                  ? `আপনি কি নিশ্চিত ${pinActionCustomer.name}-কে তালিকা থেকে আনপিন করতে চান?` 
+                  : `Are you sure you want to unpin ${pinActionCustomer.name} from the top?`)
+              : (lang === 'bn' 
+                  ? `আপনি কি নিশ্চিত ${pinActionCustomer.name}-কে তালিকার শীর্ষে পিন করতে চান?` 
+                  : `Are you sure you want to pin ${pinActionCustomer.name} to the top of the list?`)}
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              togglePinCustomer(pinActionCustomer.id);
+              setPinActionCustomer(null);
+              if (window.history.state?.modal === 'pinActionCustomer') {
+                window.history.back();
+              }
+            }}
+            className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl cursor-pointer transition-colors"
+          >
+            {pinnedCustomerIds.includes(pinActionCustomer.id)
+              ? (lang === 'bn' ? 'হ্যাঁ, আনপিন করুন' : 'Yes, Unpin')
+              : (lang === 'bn' ? 'হ্যাঁ, পিন করুন' : 'Yes, Pin to top')}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setPinActionCustomer(null);
+              if (window.history.state?.modal === 'pinActionCustomer') {
+                window.history.back();
+              }
+            }}
+            className="w-full py-4 bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-855 dark:text-zinc-300 font-bold rounded-xl cursor-pointer transition-colors"
+          >
+            {lang === 'bn' ? 'বাতিল' : 'Cancel'}
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  )}
+
+
+
   {/* Delete Customer Account Modal (Red-themed warning modal) */}
   {deletingCustomer && (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/80">
@@ -1510,8 +1793,8 @@ export default function CustomerManager({
               <span className="text-xs font-bold text-zinc-400 dark:text-zinc-500 uppercase">{t.type}</span>
               <span className={`text-xs font-black px-2.5 py-0.5 rounded-full ${
                 duplicateTxWarning.type === 'due' 
-                  ? 'bg-rose-100 text-rose-600 dark:bg-rose-955/40 dark:text-rose-400' 
-                  : 'bg-cyan-100 text-cyan-600 dark:bg-cyan-955/40 dark:text-cyan-400'
+                  ? 'bg-rose-100 text-rose-600 dark:bg-rose-900/50 dark:text-rose-400' 
+                  : 'bg-cyan-100 text-cyan-600 dark:bg-cyan-900/50 dark:text-cyan-400'
               }`}>
                 {duplicateTxWarning.type === 'due' ? t.duePlus : t.paymentMinus}
               </span>

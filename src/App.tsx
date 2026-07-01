@@ -275,16 +275,14 @@ export default function App() {
  return () => clearInterval(interval);
  }, [user, transactions, lang]);
 
- // Sync theme with Firestore settings on initial load or cross-device change
- const [initialSettingsSynced, setInitialSettingsSynced] = useState(false);
- useEffect(() => {
- if (settings?.theme && !initialSettingsSynced) {
- if (settings.theme !== theme) {
- setTheme(settings.theme);
- }
- setInitialSettingsSynced(true);
- }
- }, [settings?.theme, initialSettingsSynced, theme]);
+  // Sync theme with Firestore settings on initial load or cross-device change
+  const [initialSettingsSynced, setInitialSettingsSynced] = useState(false);
+  useEffect(() => {
+    // Theme is local only now, so we do not sync theme from settings
+    if (settings && !initialSettingsSynced) {
+      setInitialSettingsSynced(true);
+    }
+  }, [settings, initialSettingsSynced]);
 
  // Virtual Custom Dialogue Popups to bypass sandboxed iframe alert()/confirm() blocks
  const [appDialog, setAppDialog] = useState<{
@@ -937,9 +935,7 @@ updateSettings={updateSettings}
  {appDialog && appDialog.isOpen && (
  <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
  {/* Backdrop Overlay */}
- <motion.div
- initial={{ opacity: 0 }}
- animate={{ opacity: 1 }}
+ <div
  onClick={() => { if (appDialog.type === 'alert') setAppDialog(null); }}
  className="absolute inset-0 bg-black/80"
  />

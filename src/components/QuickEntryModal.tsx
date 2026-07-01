@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Customer, Transaction } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Search, UserPlus, Check, ArrowDownLeft, ArrowUpRight, ChevronLeft, AlertTriangle } from 'lucide-react';
@@ -436,24 +436,29 @@ export default function QuickEntryModal({
               )}
 
  {type === 'payment' && currentCustomer && (currentCustomer as any).outstandingDue > 0 && (
-    <div className="flex items-center gap-2 mt-3 p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-xl border border-zinc-200 dark:border-zinc-800">
-      <input
-        type="checkbox"
-        id="payFullDue"
-        className="w-4 h-4 text-emerald-600 rounded border-zinc-300 focus:ring-emerald-500 shadow-sm cursor-pointer"
-        checked={amountInput.replace(/,/g, '') === (currentCustomer as any).outstandingDue.toString()}
-        onChange={(e) => {
-          if (e.target.checked) {
-            setAmountInput(formatIndianNumberString((currentCustomer as any).outstandingDue.toString()));
-          } else {
-            setAmountInput('');
-          }
-        }}
-      />
-      <label htmlFor="payFullDue" className="text-xs font-bold text-zinc-600 dark:text-zinc-300">
-        {lang === 'bn' ? 'সম্পূর্ণ বকেয়া পরিশোধ করুন' : 'Settle complete due'} (৳{formatNumber((currentCustomer as any).outstandingDue, lang)})
-      </label>
-    </div>
+    <div 
+       onClick={() => {
+         triggerHaptic('single');
+         const targetDue = (currentCustomer as any).outstandingDue;
+         const isChecked = amountInput.replace(/,/g, '') === targetDue.toString();
+         if (!isChecked) {
+           setAmountInput(formatIndianNumberString(targetDue.toString()));
+         } else {
+           setAmountInput('');
+         }
+       }}
+       className="w-full flex items-center text-left gap-2 mt-3 p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-xl border border-zinc-200 dark:border-zinc-800 cursor-pointer hover:bg-zinc-100 dark:hover:bg-zinc-850/50 transition-colors select-none"
+     >
+       <input
+         type="checkbox"
+         className="w-4 h-4 text-emerald-600 rounded border-zinc-300 focus:ring-emerald-500 shadow-sm cursor-pointer pointer-events-none"
+         checked={amountInput.replace(/,/g, '') === (currentCustomer as any).outstandingDue.toString()}
+         readOnly
+       />
+       <span className="text-xs font-bold text-zinc-650 dark:text-zinc-200 select-none font-bold">
+         {lang === 'bn' ? 'সম্পূর্ণ বকেয়া পরিশোধ করুন' : 'Settle complete due'} (৳{formatNumber((currentCustomer as any).outstandingDue, lang)})
+       </span>
+     </div>
   )}
 
  {/* Speedy Pad helpers */}
@@ -497,7 +502,7 @@ export default function QuickEntryModal({
             {/* Error Message & Actions Submit sticky bottom navbar */}
             <div className="p-5 border-t border-zinc-100 dark:border-zinc-800 bg-white dark:bg-zinc-900 shrink-0">
               {errorMsg && (
-                <div className="p-4 mb-4 bg-rose-50 dark:bg-rose-955/20 rounded-xl text-rose-600 dark:text-rose-400 font-semibold text-sm flex items-start gap-2">
+                <div className="p-4 mb-4 bg-rose-50 dark:bg-rose-900/35 rounded-xl text-rose-600 dark:text-rose-400 font-semibold text-sm flex items-start gap-2">
                   <AlertTriangle className="w-4.5 h-4.5 text-amber-500 shrink-0 mt-0.5" />
                   <span>{errorMsg}</span>
                 </div>
@@ -556,8 +561,8 @@ export default function QuickEntryModal({
               <span className="text-xs font-bold text-zinc-400 dark:text-zinc-500 uppercase">{t.type}</span>
               <span className={`text-xs font-black px-2.5 py-0.5 rounded-full ${
                 duplicateTxWarning.type === 'due' 
-                  ? 'bg-rose-100 text-rose-600 dark:bg-rose-955/40 dark:text-rose-400' 
-                  : 'bg-cyan-100 text-cyan-600 dark:bg-cyan-955/40 dark:text-cyan-400'
+                  ? 'bg-rose-100 text-rose-600 dark:bg-rose-900/50 dark:text-rose-400' 
+                  : 'bg-cyan-100 text-cyan-600 dark:bg-cyan-900/50 dark:text-cyan-400'
               }`}>
                 {duplicateTxWarning.type === 'due' ? t.duePlus : t.paymentMinus}
               </span>

@@ -9,20 +9,20 @@ export const triggerHaptic = (type: 'single' | 'double' | 'tick' | number | numb
   // 3: 50ms (Medium buzz)
   // 4: 75ms (Firm buzz)
   // 5: 110ms (Strong buzz)
-  const baseDuration = intensity === 1 ? 15
-                     : intensity === 2 ? 30
-                     : intensity === 3 ? 50
-                     : intensity === 4 ? 75
+  const baseDuration = intensity === 1 ? 8
+                     : intensity === 2 ? 15
+                     : intensity === 3 ? 28
+                     : intensity === 4 ? 55
                      : 110;
 
   let pattern: number | number[];
   
   if (typeof type === 'number') {
     // scale custom duration based on intensity ratio to medium (intensity 3 = 50ms)
-    const ratio = baseDuration / 50;
+    const ratio = baseDuration / 28;
     pattern = Math.max(8, Math.round(type * ratio));
   } else if (Array.isArray(type)) {
-    const ratio = baseDuration / 50;
+    const ratio = baseDuration / 28;
     pattern = type.map((val, idx) => {
       if (idx % 2 === 0) { // vibrate duration
         return Math.max(8, Math.round(val * ratio));
