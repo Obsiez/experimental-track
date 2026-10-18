@@ -17,7 +17,8 @@ import {
  getDocs
 } from 'firebase/firestore';
 import { db, auth, OperationType } from '../firebase';
-import { Customer, Transaction, Reminder, UserSettings, SavingGoal, GoalContribution } from '../types';
+import { Customer, Transaction, Reminder, UserSettings, SavingGoal, GoalContribution, ImportProgress } from '../types';
+import { cleanBangladeshiPhone } from '../lib/phoneUtils';
 
 export function useLedger(
   userId: string | undefined, 
@@ -28,6 +29,7 @@ export function useLedger(
   const [trashCustomers, setTrashCustomers] = useState<Customer[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [customerTransactions, setCustomerTransactions] = useState<Transaction[]>([]);
+  const [allCustomerTxs, setAllCustomerTxs] = useState<Transaction[]>([]);
   const [archiveTransactions, setArchiveTransactions] = useState<Transaction[]>([]);
     const [monthlySummaries, setMonthlySummaries] = useState<any[]>([]);
 
@@ -147,6 +149,7 @@ export function useLedger(
     localStorage.setItem(`easy_due_goals_${userId}`, JSON.stringify(list));
   };
   const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [archivedStatements, setArchivedStatements] = useState<Transaction[]>([]);
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [customersSynced, setCustomersSynced] = useState(false);
@@ -171,6 +174,7 @@ const lastSubmitRef = useRef<{
  const storedSettings = localStorage.getItem(`easy_due_settings_${userId}`);
       const storedSummaries = localStorage.getItem(`easy_due_monthly_summaries_${userId}`);
       const storedGoals = localStorage.getItem(`easy_due_goals_${userId}`);
+      const storedArchived = localStorage.getItem(`easy_due_archived_statements_${userId}`);
 
  if (storedCustomers) {
  const parsed = JSON.parse(storedCustomers).map((c: any) => ({
@@ -222,23 +226,30 @@ const lastSubmitRef = useRef<{
         setGoals([]);
       }
 
+      if (storedArchived) {
+        setArchivedStatements(JSON.parse(storedArchived).map((t: any) => ({
+          ...t,
+          date: new Date(t.date),
+          createdAt: new Date(t.createdAt)
+        })));
+      } else {
+        setArchivedStatements([]);
+      }
+
  if (storedSettings) {
         const parsed = JSON.parse(storedSettings);
-        const loginTheme = sessionStorage.getItem('login_intent_theme');
-        if (loginTheme && loginTheme !== parsed.theme) {
-          parsed.theme = loginTheme as 'light' | 'dark';
-          saveLocalSettings(parsed);
+        if (!parsed.theme || (parsed.theme !== 'light' && parsed.theme !== 'dark')) {
+          parsed.theme = 'dark';
         }
-        sessionStorage.removeItem('login_intent_theme');
         setSettings(parsed);
  } else {
-        const loginTheme = sessionStorage.getItem('login_intent_theme') || 'light';
-        sessionStorage.removeItem('login_intent_theme');
         setSettings({
           uid: userId,
           email: auth.currentUser?.email || 'guest@challantrack.local',
-          theme: loginTheme as 'light' | 'dark',
+          theme: 'dark',
           dailyReminderTime: '09:00',
+          autoMergeStatements: false,
+          statementKeepCount: 15,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         });
@@ -260,6 +271,9 @@ const lastSubmitRef = useRef<{
  };
  const saveLocalSettings = (val: UserSettings) => {
  localStorage.setItem(`easy_due_settings_${userId}`, JSON.stringify(val));
+ };
+ const saveLocalArchivedStatements = (list: Transaction[]) => {
+ localStorage.setItem(`easy_due_archived_statements_${userId}`, JSON.stringify(list));
  };
 
   // Load cache immediately on userId change to populate UI with 0ms delay, and set up sync timeout
@@ -314,25 +328,17 @@ const lastSubmitRef = useRef<{
  const unsubscribe = onSnapshot(userDocRef, (docSnap) => {
  if (docSnap.exists()) {
         const data = docSnap.data() as UserSettings;
-        
-        const loginTheme = sessionStorage.getItem('login_intent_theme');
-        if (loginTheme && loginTheme !== data.theme) {
-          data.theme = loginTheme as 'light' | 'dark';
-          updateDoc(userDocRef, { theme: loginTheme, updatedAt: serverTimestamp() }).catch(e => console.warn(e));
+        if (!data.theme || (data.theme !== 'light' && data.theme !== 'dark')) {
+          data.theme = 'dark';
         }
-        sessionStorage.removeItem('login_intent_theme');
-
         setSettings(data);
         saveLocalSettings(data);
  } else {
-        const loginTheme = sessionStorage.getItem('login_intent_theme') || 'light';
-        sessionStorage.removeItem('login_intent_theme');
-        
-        // Initialize default user settings if not exists
+        // Initialize default user settings if not exists (Dark mode default for new accounts)
         const defaultSettings: UserSettings = {
           uid: userId,
           email: auth.currentUser?.email || '',
-          theme: loginTheme as 'light' | 'dark',
+          theme: 'dark',
           dailyReminderTime: '09:00',
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
@@ -393,22 +399,37 @@ const lastSubmitRef = useRef<{
  return () => unsubscribe();
  }, [userId]);
 
-// 3. Sync Paginated Customer Transactions (only when a customer profile is open)
+// 3. Sync Customer Transactions on-demand (Option A: Client-Side Sorting - No composite index required!)
   useEffect(() => {
     if (!userId || userId === 'local-guest-session' || isOfflineFallback) {
       return;
     }
     if (!activeCustomerId) {
+      setAllCustomerTxs([]);
       setCustomerTransactions([]);
       return;
     }
 
+    // Try loading immediately from local cache if available for instant display
+    try {
+      const cached = localStorage.getItem(`easy_due_txs_${userId}_${activeCustomerId}`);
+      if (cached) {
+        const parsed: Transaction[] = JSON.parse(cached).map((t: any) => ({
+          ...t,
+          date: parseTxDate(t.date),
+          createdAt: parseTxDate(t.createdAt)
+        }));
+        setAllCustomerTxs(parsed);
+      }
+    } catch (e) {
+      console.warn("Failed to load cached customer txs:", e);
+    }
+
     const txRef = collection(db, 'users', userId, 'transactions');
+    // Equality query only on 'customerId' - supported by default single-field index without requiring composite index!
     const q = query(
       txRef,
-      where('customerId', '==', activeCustomerId),
-      orderBy('date', 'desc'),
-      limit(customerTxLimit)
+      where('customerId', '==', activeCustomerId)
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -418,43 +439,78 @@ const lastSubmitRef = useRef<{
         list.push({
           ...data,
           id: docSnap.id,
-          date: data.date?.toDate ? data.date.toDate() : new Date(data.date),
+          date: parseTxDate(data.date),
           createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : (data.createdAt ? new Date(data.createdAt).toISOString() : new Date()),
         } as Transaction);
       });
-      setCustomerTransactions(list);
+
+      // Client-side sort descending by date (newest first)
+      list.sort((a, b) => {
+        const dateA = parseTxDate(a.date).getTime();
+        const dateB = parseTxDate(b.date).getTime();
+        return dateB - dateA;
+      });
+
+      setAllCustomerTxs(list);
+      setActiveCustomerTxCount(list.length);
+
+      // Save to local cache for instant future loads
+      try {
+        localStorage.setItem(`easy_due_txs_${userId}_${activeCustomerId}`, JSON.stringify(list));
+      } catch (e) {
+        console.warn("Failed to cache customer txs:", e);
+      }
     }, (error) => {
       console.warn("Firestore error syncing customer transactions:", error);
     });
 
     return () => unsubscribe();
-  }, [userId, activeCustomerId, customerTxLimit, isOfflineFallback]);
+  }, [userId, activeCustomerId, isOfflineFallback]);
 
-  // 3a. Compute Customer Transactions locally in guest session or offline fallback
+  // 3a. Slice Customer Transactions according to pagination limit (for both cloud & guest sessions)
   useEffect(() => {
-    if (!userId) return;
+    if (!activeCustomerId) {
+      setCustomerTransactions([]);
+      return;
+    }
+
     if (userId === 'local-guest-session' || isOfflineFallback) {
-      if (!activeCustomerId) {
-        setCustomerTransactions([]);
-        return;
-      }
       const filtered = transactions
         .filter(t => t.customerId === activeCustomerId)
         .sort((a, b) => {
-          const dateA = a.date instanceof Date ? a.date : new Date(a.date);
-          const dateB = b.date instanceof Date ? b.date : new Date(b.date);
-          return dateB.getTime() - dateA.getTime();
+          const dateA = parseTxDate(a.date).getTime();
+          const dateB = parseTxDate(b.date).getTime();
+          return dateB - dateA;
         })
         .slice(0, customerTxLimit);
       setCustomerTransactions(filtered);
+    } else {
+      setCustomerTransactions(allCustomerTxs.slice(0, customerTxLimit));
     }
-  }, [userId, transactions, activeCustomerId, customerTxLimit, isOfflineFallback]);
+  }, [userId, isOfflineFallback, activeCustomerId, transactions, allCustomerTxs, customerTxLimit]);
 
-// 3b. Sync Daily Archive Transactions (queries Firestore for selected date range)
+// 3b. Sync Daily Archive Transactions (Option A: Instant local cache + windowed Firestore query)
   useEffect(() => {
     if (!userId || userId === 'local-guest-session' || isOfflineFallback || !selectedDailyDate) {
       setArchiveTransactions([]);
       return;
+    }
+
+    const dayKey = `${selectedDailyDate.getFullYear()}-${String(selectedDailyDate.getMonth() + 1).padStart(2, '0')}-${String(selectedDailyDate.getDate()).padStart(2, '0')}`;
+
+    // Try loading immediately from local cache if available for instant display
+    try {
+      const cached = localStorage.getItem(`easy_due_daily_${userId}_${dayKey}`);
+      if (cached) {
+        const parsed: Transaction[] = JSON.parse(cached).map((t: any) => ({
+          ...t,
+          date: parseTxDate(t.date),
+          createdAt: parseTxDate(t.createdAt)
+        }));
+        setArchiveTransactions(parsed);
+      }
+    } catch (e) {
+      console.warn("Failed to load cached daily txs:", e);
     }
 
     // Query firestore directly for the selected date range
@@ -482,7 +538,21 @@ const lastSubmitRef = useRef<{
           createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : (data.createdAt ? new Date(data.createdAt) : new Date()),
         } as Transaction);
       });
+
+      list.sort((a, b) => {
+        const dateA = parseTxDate(a.date).getTime();
+        const dateB = parseTxDate(b.date).getTime();
+        return dateB - dateA;
+      });
+
       setArchiveTransactions(list);
+
+      // Save to local cache for instant future loads
+      try {
+        localStorage.setItem(`easy_due_daily_${userId}_${dayKey}`, JSON.stringify(list));
+      } catch (e) {
+        console.warn("Failed to cache daily txs:", e);
+      }
     }, (error) => {
       console.warn("Firestore error syncing daily archive transactions:", error);
     });
@@ -552,7 +622,7 @@ const lastSubmitRef = useRef<{
     const q = query(summariesRef, limit(12));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const list = [];
+      const list: any[] = [];
       snapshot.forEach((docSnap) => {
         list.push({
           id: docSnap.id,
@@ -712,19 +782,23 @@ const lastSubmitRef = useRef<{
  }
 
  const remindersRef = collection(db, 'users', userId, 'reminders');
- const q = query(remindersRef, orderBy('dueDate', 'asc'));
 
- const unsubscribe = onSnapshot(q, (snapshot) => {
+ const unsubscribe = onSnapshot(remindersRef, (snapshot) => {
  const list: Reminder[] = [];
  snapshot.forEach((docSnap) => {
  const data = docSnap.data();
+ const rawDue = data.dueDate;
+ const parsedDueDate = rawDue?.toDate ? rawDue.toDate() : (rawDue ? new Date(rawDue) : new Date());
+ const rawCreated = data.createdAt;
+ const parsedCreatedAt = rawCreated?.toDate ? rawCreated.toDate() : (rawCreated ? new Date(rawCreated) : new Date());
  list.push({
  ...data,
  id: docSnap.id,
- dueDate: data.dueDate?.toDate ? data.dueDate.toDate() : new Date(data.dueDate),
- createdAt: data.createdAt?.toDate ? data.createdAt.toDate() : new Date(data.createdAt),
+ dueDate: parsedDueDate,
+ createdAt: parsedCreatedAt,
  } as Reminder);
  });
+ list.sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
  setReminders(list);
  saveLocalReminders(list);
  }, (error) => {
@@ -772,7 +846,7 @@ const lastSubmitRef = useRef<{
  const updatedSettings = settings ? { ...settings, dailyReminderTime: time, updatedAt: new Date() } : {
  uid: userId,
  email: auth.currentUser?.email || 'guest@challantrack.local',
- theme: 'light' as const,
+ theme: 'dark' as const,
  dailyReminderTime: time,
  createdAt: new Date(),
  updatedAt: new Date()
@@ -795,6 +869,208 @@ const lastSubmitRef = useRef<{
  }
  };
 
+  // Sync Archived Statements collection
+  useEffect(() => {
+    if (!userId || userId === 'local-guest-session' || isOfflineFallback) return;
+    const archRef = collection(db, 'users', userId, 'archived_transactions');
+    const unsubscribe = onSnapshot(archRef, (snapshot) => {
+      const list: Transaction[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        list.push({
+          ...data,
+          id: docSnap.id,
+          date: parseTxDate(data.date),
+          createdAt: parseTxDate(data.createdAt)
+        } as Transaction);
+      });
+      list.sort((a, b) => parseTxDate(b.date).getTime() - parseTxDate(a.date).getTime());
+      setArchivedStatements(list);
+      saveLocalArchivedStatements(list);
+    }, (err) => {
+      console.warn("Firestore error syncing archived_transactions:", err);
+    });
+    return () => unsubscribe();
+  }, [userId, isOfflineFallback]);
+
+  // Helper: Archive older transactions for a single customer beyond keepCount (without changing customer balance or adding adjustment)
+  const archiveCustomerExcessStatements = async (customerId: string, keepCount: number) => {
+    if (!userId || keepCount < 1) return 0;
+
+    if (userId === 'local-guest-session' || isOfflineFallback) {
+      const custTxs = transactions
+        .filter(t => t.customerId === customerId)
+        .sort((a, b) => parseTxDate(b.date).getTime() - parseTxDate(a.date).getTime());
+
+      if (custTxs.length <= keepCount) return 0;
+
+      const toArchive = custTxs.slice(keepCount);
+      const archiveIds = new Set(toArchive.map(t => t.id));
+      const remainingTxs = transactions.filter(t => !archiveIds.has(t.id));
+      const nextArchived = [...toArchive, ...archivedStatements.filter(a => !archiveIds.has(a.id))];
+
+      setTransactions(remainingTxs);
+      saveLocalTransactions(remainingTxs);
+      setArchivedStatements(nextArchived);
+      saveLocalArchivedStatements(nextArchived);
+
+      if (customerId === activeCustomerId) {
+        const keptCustTxs = custTxs.slice(0, keepCount);
+        setAllCustomerTxs(keptCustTxs);
+        setActiveCustomerTxCount(keptCustTxs.length);
+      }
+      return toArchive.length;
+    }
+
+    try {
+      const txRef = collection(db, 'users', userId, 'transactions');
+      const q = query(txRef, where('customerId', '==', customerId));
+      const snap = await getDocs(q);
+      const custTxs: Transaction[] = [];
+      snap.forEach(d => {
+        const data = d.data();
+        custTxs.push({
+          ...data,
+          id: d.id,
+          date: parseTxDate(data.date),
+          createdAt: parseTxDate(data.createdAt)
+        } as Transaction);
+      });
+
+      custTxs.sort((a, b) => parseTxDate(b.date).getTime() - parseTxDate(a.date).getTime());
+      if (custTxs.length <= keepCount) return 0;
+
+      const toArchive = custTxs.slice(keepCount);
+      const archiveIds = new Set(toArchive.map(t => t.id));
+
+      // Update local state & cache immediately
+      setTransactions(prev => {
+        const rem = prev.filter(t => !archiveIds.has(t.id));
+        saveLocalTransactions(rem);
+        return rem;
+      });
+      setArchivedStatements(prev => {
+        const merged = [...toArchive, ...prev.filter(a => !archiveIds.has(a.id))];
+        saveLocalArchivedStatements(merged);
+        return merged;
+      });
+
+      if (customerId === activeCustomerId) {
+        const kept = custTxs.slice(0, keepCount);
+        setAllCustomerTxs(kept);
+        setActiveCustomerTxCount(kept.length);
+        try {
+          localStorage.setItem(`easy_due_txs_${userId}_${customerId}`, JSON.stringify(kept));
+        } catch {}
+      }
+
+      // Commit to Firestore in batches of 200
+      for (let i = 0; i < toArchive.length; i += 200) {
+        const chunk = toArchive.slice(i, i + 200);
+        const batch = writeBatch(db);
+        chunk.forEach(tx => {
+          const archDocRef = doc(db, 'users', userId, 'archived_transactions', tx.id);
+          batch.set(archDocRef, {
+            ...tx,
+            archivedAt: serverTimestamp()
+          });
+          const activeDocRef = doc(db, 'users', userId, 'transactions', tx.id);
+          batch.delete(activeDocRef);
+        });
+        const userDocRef = doc(db, 'users', userId);
+        batch.update(userDocRef, {
+          transactionsCount: increment(-chunk.length),
+          updatedAt: serverTimestamp()
+        });
+        await batch.commit();
+      }
+
+      return toArchive.length;
+    } catch (err) {
+      console.warn("Failed to archive excess statements for customer:", err);
+      return 0;
+    }
+  };
+
+  // Update Auto-Merge / Archive Statements setting and trim excess statements when enabled
+  const updateStatementAutoMerge = async (enabled: boolean, keepCount: number = 15): Promise<number> => {
+    if (!userId) return 0;
+    const validKeep = Math.max(1, Math.min(500, Number(keepCount) || 15));
+
+    const updatedSettings: UserSettings = settings
+      ? {
+          ...settings,
+          autoMergeStatements: enabled,
+          statementKeepCount: validKeep,
+          updatedAt: new Date()
+        }
+      : {
+          uid: userId,
+          email: auth.currentUser?.email || 'guest@challantrack.local',
+          theme: 'dark',
+          dailyReminderTime: '09:00',
+          autoMergeStatements: enabled,
+          statementKeepCount: validKeep,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        };
+
+    setSettings(updatedSettings);
+    saveLocalSettings(updatedSettings);
+
+    if (userId !== 'local-guest-session' && !isOfflineFallback) {
+      const userDocRef = doc(db, 'users', userId);
+      try {
+        await updateDoc(userDocRef, {
+          autoMergeStatements: enabled,
+          statementKeepCount: validKeep,
+          updatedAt: serverTimestamp()
+        });
+      } catch (err) {
+        console.warn("Firestore updateStatementAutoMerge failed, saved locally:", err);
+      }
+    }
+
+    let totalArchivedNow = 0;
+    if (enabled) {
+      for (const c of customers) {
+        const count = await archiveCustomerExcessStatements(c.id, validKeep);
+        totalArchivedNow += count;
+      }
+    }
+    return totalArchivedNow;
+  };
+
+  const exportArchivedStatements = async () => {
+    if (!userId) return [];
+    if (userId === 'local-guest-session' || isOfflineFallback) {
+      return archivedStatements;
+    }
+    try {
+      const archRef = collection(db, 'users', userId, 'archived_transactions');
+      const snap = await getDocs(archRef);
+      const list: any[] = [];
+      snap.forEach((docSnap) => {
+        const data = docSnap.data();
+        list.push({
+          id: docSnap.id,
+          customerId: data.customerId,
+          customerName: data.customerName,
+          type: data.type,
+          amount: data.amount,
+          description: data.description || '',
+          date: parseTxDate(data.date).toISOString(),
+          archivedAt: data.archivedAt ? parseTxDate(data.archivedAt).toISOString() : new Date().toISOString()
+        });
+      });
+      list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      return list;
+    } catch (err) {
+      console.warn("Failed to fetch remote archived statements, using local cache:", err);
+      return archivedStatements;
+    }
+  };
+
  // Create new customer
  const createCustomer = async (name: string, phone: string) => {
  if (!userId) return null;
@@ -811,7 +1087,7 @@ const lastSubmitRef = useRef<{
  id: customId,
  userId,
  name: trimmedName,
- phone: phone.trim(),
+ phone: cleanBangladeshiPhone(phone),
  outstandingDue: 0,
  createdAt: new Date(),
  updatedAt: new Date()
@@ -892,6 +1168,53 @@ const lastSubmitRef = useRef<{
     batch.set(summaryRef, updates, { merge: true });
   };
 
+  // Helper to adjust daily summary documents atomically inside a batch (Option A: Quickbook Sync)
+  const adjustDailySummary = (
+    batch: any, 
+    uid: string, 
+    oldTx: Transaction | null, 
+    newTx: Transaction | null
+  ) => {
+    const getTxDayKey = (tx: Transaction) => {
+      const d = parseTxDate(tx.date);
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+
+    const targetDay = newTx ? getTxDayKey(newTx) : (oldTx ? getTxDayKey(oldTx) : null);
+    if (!targetDay) return;
+
+    const summaryRef = doc(db, 'users', uid, 'daily_summaries', targetDay);
+
+    let diffDues = 0;
+    let diffPayments = 0;
+    let diffCount = 0;
+
+    if (oldTx) {
+      diffCount--;
+      if (oldTx.type === 'due') diffDues -= oldTx.amount;
+      else diffPayments -= oldTx.amount;
+    }
+    if (newTx) {
+      diffCount++;
+      if (newTx.type === 'due') diffDues += newTx.amount;
+      else diffPayments += newTx.amount;
+    }
+
+    const updates: any = {
+      id: targetDay,
+      dateStr: targetDay,
+      dues: increment(diffDues),
+      payments: increment(diffPayments),
+      count: increment(diffCount),
+      updatedAt: serverTimestamp()
+    };
+
+    batch.set(summaryRef, updates, { merge: true });
+  };
+
   const rebuildMonthlySummaries = async (uid: string) => {
     if (!uid || uid === 'local-guest-session') return;
     if ((window as any).isRebuildingSummaries) return;
@@ -902,7 +1225,7 @@ const lastSubmitRef = useRef<{
       const txRef = collection(db, 'users', uid, 'transactions');
       const qSnap = await getDocs(txRef);
       
-      const summaries = {};
+      const summaries: Record<string, any> = {};
       let totalCount = 0;
       
       qSnap.forEach(docSnap => {
@@ -1046,6 +1369,15 @@ const lastSubmitRef = useRef<{
  saveLocalTransactions(updatedTxs);
  saveLocalCustomers(updatedCustomers);
 
+ if (customerId === activeCustomerId) {
+   setAllCustomerTxs(prev => [newTx, ...prev.filter(t => t.id !== newTx.id)]);
+   setActiveCustomerTxCount(prev => prev + 1);
+ }
+
+ if (selectedDailyDate && parseTxDate(date).toDateString() === selectedDailyDate.toDateString()) {
+   setArchiveTransactions(prev => [newTx, ...prev.filter(t => t.id !== newTx.id)]);
+ }
+
  adjustLocalMonthlySummaries(null, newTx);
 
  if (settings) {
@@ -1058,7 +1390,10 @@ const lastSubmitRef = useRef<{
  }
 
  if (userId === 'local-guest-session' || isOfflineFallback) {
- return;
+   if (settings?.autoMergeStatements) {
+     await archiveCustomerExcessStatements(customerId, settings.statementKeepCount || 15);
+   }
+   return;
  }
 
  const txRef = collection(db, 'users', userId, 'transactions');
@@ -1079,6 +1414,7 @@ const lastSubmitRef = useRef<{
  });
 
  adjustMonthlySummary(batch, userId, null, newTx);
+ adjustDailySummary(batch, userId, null, newTx);
 
  const userDocRef = doc(db, 'users', userId);
  batch.update(userDocRef, {
@@ -1088,30 +1424,64 @@ const lastSubmitRef = useRef<{
 
  try {
  await batch.commit();
+ if (settings?.autoMergeStatements) {
+   await archiveCustomerExcessStatements(customerId, settings.statementKeepCount || 15);
+ }
  } catch (err) {
  console.warn("Firestore addTransaction failed, saved locally:", err);
  }
  };
 
- // Add a reminder for customer
- const addReminder = async (customerId: string, notes: string, dueDate: Date) => {
+ // Add a reminder for customer or EMI installment
+ const addReminder = async (
+   customerId: string, 
+   notes: string, 
+   dueDate: Date,
+   extra?: {
+     type?: 'customer' | 'emi';
+     goalId?: string;
+     customerName?: string;
+     emiDayOfMonth?: number;
+     installmentAmount?: number;
+   }
+ ) => {
  if (!userId) return;
  const customer = customers.find(c => c.id === customerId);
- if (!customer) return;
+ const resolvedName = extra?.customerName || customer?.name || 'EMI Account';
+ const reminderType = extra?.type || 'customer';
+
+ // Prevent duplicate active reminders for the same person or same EMI
+ const duplicateReminders = reminders.filter(r => {
+   if (!r.active) return false;
+   if (reminderType === 'emi') {
+     if (r.type !== 'emi') return false;
+     if (extra?.goalId && r.goalId === extra.goalId) return true;
+     if (resolvedName && r.customerName && r.customerName.trim().toLowerCase() === resolvedName.trim().toLowerCase()) return true;
+     return false;
+   } else {
+     if (r.type === 'emi') return false;
+     return customerId && r.customerId === customerId;
+   }
+ });
 
  const customRemId = doc(collection(db, 'temp')).id;
  const newReminder: Reminder = {
  id: customRemId,
  userId,
- customerId,
- customerName: customer.name,
+ customerId: customerId || extra?.goalId || '',
+ customerName: resolvedName,
  notes: notes.trim(),
  dueDate,
  active: true,
- createdAt: new Date()
+ createdAt: new Date(),
+ type: reminderType,
+ goalId: extra?.goalId,
+ emiDayOfMonth: extra?.emiDayOfMonth,
+ installmentAmount: extra?.installmentAmount
  };
 
- const updatedReminders = [newReminder, ...reminders];
+ const filteredReminders = reminders.filter(r => !duplicateReminders.some(d => d.id === r.id));
+ const updatedReminders = [newReminder, ...filteredReminders];
  setReminders(updatedReminders);
  saveLocalReminders(updatedReminders);
 
@@ -1119,14 +1489,36 @@ const lastSubmitRef = useRef<{
  return;
  }
 
+ // Delete duplicates from Firestore asynchronously
+ for (const dup of duplicateReminders) {
+   try {
+     deleteDoc(doc(db, 'users', userId, 'reminders', dup.id));
+   } catch (err) {
+     console.warn("Failed to remove duplicate reminder from Firestore:", err);
+   }
+ }
+
  const remindersRef = collection(db, 'users', userId, 'reminders');
  const newReminderRef = doc(remindersRef, customRemId);
- try {
- await setDoc(newReminderRef, {
- ...newReminder,
+ const firestoreReminder: any = {
+ id: customRemId,
+ userId,
+ customerId: customerId || extra?.goalId || '',
+ customerName: resolvedName,
+ notes: notes.trim(),
  dueDate,
- createdAt: serverTimestamp()
- });
+ active: true,
+ createdAt: serverTimestamp(),
+ type: reminderType
+ };
+ if (extra?.goalId) firestoreReminder.goalId = extra.goalId;
+ if (extra?.emiDayOfMonth !== undefined) firestoreReminder.emiDayOfMonth = Number(extra.emiDayOfMonth);
+ if (extra?.installmentAmount !== undefined && !isNaN(Number(extra.installmentAmount))) {
+ firestoreReminder.installmentAmount = Number(extra.installmentAmount);
+ }
+
+ try {
+ await setDoc(newReminderRef, firestoreReminder);
  } catch (err) {
  console.warn("Firestore addReminder failed, saved locally:", err);
  }
@@ -1242,7 +1634,7 @@ const lastSubmitRef = useRef<{
     saveLocalCustomers([...updatedCustomers, ...updatedTrash]);
 
     const updatedTxs = transactions.filter(t => t.customerId !== customerId);
-    const updatedReminders = reminders.filter(r => r.customerId !== customerId);
+    const updatedReminders = reminders.filter(r => r.type === 'emi' || r.customerId !== customerId);
     setTransactions(updatedTxs);
     setReminders(updatedReminders);
     saveLocalTransactions(updatedTxs);
@@ -1253,13 +1645,34 @@ const lastSubmitRef = useRef<{
     }
 
     const customerDocRef = doc(db, 'users', userId, 'customers', customerId);
-    const relatedTxs = transactions.filter(t => t.customerId === customerId);
-    const relatedReminders = reminders.filter(r => r.customerId === customerId);
+    let relatedTxs = transactions.filter(t => t.customerId === customerId);
+    try {
+      const qTx = query(collection(db, 'users', userId, 'transactions'), where('customerId', '==', customerId));
+      const snap = await getDocs(qTx);
+      const fetched: Transaction[] = [];
+      snap.forEach(d => fetched.push({ ...d.data(), id: d.id } as Transaction));
+      if (fetched.length > 0) relatedTxs = fetched;
+    } catch (e) {
+      console.warn("Could not query remote transactions for deletion, using cached list:", e);
+    }
+
+    let relatedReminders = reminders.filter(r => r.type !== 'emi' && r.customerId === customerId);
+    try {
+      const qRem = query(collection(db, 'users', userId, 'reminders'), where('customerId', '==', customerId));
+      const snapRem = await getDocs(qRem);
+      const fetchedRem: Reminder[] = [];
+      snapRem.forEach(d => fetchedRem.push({ ...d.data(), id: d.id } as Reminder));
+      if (fetchedRem.length > 0) relatedReminders = fetchedRem;
+    } catch (e) {
+      console.warn("Could not query remote reminders for deletion, using cached list:", e);
+    }
 
     const batch = writeBatch(db);
     batch.delete(customerDocRef);
     relatedTxs.forEach(tx => {
       batch.delete(doc(db, 'users', userId, 'transactions', tx.id));
+      adjustMonthlySummary(batch, userId, tx, null);
+      adjustDailySummary(batch, userId, tx, null);
     });
     relatedReminders.forEach(rem => {
       batch.delete(doc(db, 'users', userId, 'reminders', rem.id));
@@ -1282,7 +1695,7 @@ const lastSubmitRef = useRef<{
     saveLocalCustomers(customers);
 
     const updatedTxs = transactions.filter(t => !idsToDelete.includes(t.customerId));
-    const updatedReminders = reminders.filter(r => !idsToDelete.includes(r.customerId));
+    const updatedReminders = reminders.filter(r => r.type === 'emi' || !idsToDelete.includes(r.customerId));
     setTransactions(updatedTxs);
     setReminders(updatedReminders);
     saveLocalTransactions(updatedTxs);
@@ -1295,13 +1708,34 @@ const lastSubmitRef = useRef<{
     try {
       for (const customerId of idsToDelete) {
         const customerDocRef = doc(db, 'users', userId, 'customers', customerId);
-        const relatedTxs = transactions.filter(t => t.customerId === customerId);
-        const relatedReminders = reminders.filter(r => r.customerId === customerId);
+        let relatedTxs = transactions.filter(t => t.customerId === customerId);
+        try {
+          const qTx = query(collection(db, 'users', userId, 'transactions'), where('customerId', '==', customerId));
+          const snap = await getDocs(qTx);
+          const fetched: Transaction[] = [];
+          snap.forEach(d => fetched.push({ ...d.data(), id: d.id } as Transaction));
+          if (fetched.length > 0) relatedTxs = fetched;
+        } catch (e) {
+          console.warn("Could not query remote transactions for deletion, using cached list:", e);
+        }
+
+        let relatedReminders = reminders.filter(r => r.type !== 'emi' && r.customerId === customerId);
+        try {
+          const qRem = query(collection(db, 'users', userId, 'reminders'), where('customerId', '==', customerId));
+          const snapRem = await getDocs(qRem);
+          const fetchedRem: Reminder[] = [];
+          snapRem.forEach(d => fetchedRem.push({ ...d.data(), id: d.id } as Reminder));
+          if (fetchedRem.length > 0) relatedReminders = fetchedRem;
+        } catch (e) {
+          console.warn("Could not query remote reminders for deletion, using cached list:", e);
+        }
 
         const batch = writeBatch(db);
         batch.delete(customerDocRef);
         relatedTxs.forEach(tx => {
           batch.delete(doc(db, 'users', userId, 'transactions', tx.id));
+          adjustMonthlySummary(batch, userId, tx, null);
+          adjustDailySummary(batch, userId, tx, null);
         });
         relatedReminders.forEach(rem => {
           batch.delete(doc(db, 'users', userId, 'reminders', rem.id));
@@ -1316,7 +1750,7 @@ const lastSubmitRef = useRef<{
   const updateCustomerDetails = async (customerId: string, name: string, phone: string) => {
     if (!userId) return;
     const trimmedName = name.trim();
-    const trimmedPhone = phone.trim();
+    const trimmedPhone = cleanBangladeshiPhone(phone);
 
     // Check for duplicate name excluding the customer being updated
     const isDuplicate = customers.some(c => c.id !== customerId && c.name.toLowerCase() === trimmedName.toLowerCase());
@@ -1356,6 +1790,7 @@ const lastSubmitRef = useRef<{
     if (!userId) return;
 
     let tx = customerTransactions.find(t => t.id === transactionId) ||
+             allCustomerTxs.find(t => t.id === transactionId) ||
              archiveTransactions.find(t => t.id === transactionId) ||
              transactions.find(t => t.id === transactionId);
 
@@ -1385,11 +1820,14 @@ const lastSubmitRef = useRef<{
     setCustomers(updatedCustomers);
     saveLocalCustomers(updatedCustomers);
 
+    const editedTimestamp = new Date();
     const updatedTx: Transaction = {
       ...tx,
       type: newType,
       amount: newAmount,
-      description: newDescription.trim()
+      description: newDescription.trim(),
+      isEdited: true,
+      editedAt: editedTimestamp
     };
 
     // Update local cache in localStorage
@@ -1402,12 +1840,32 @@ const lastSubmitRef = useRef<{
               ...t,
               type: newType,
               amount: newAmount,
-              description: newDescription.trim()
+              description: newDescription.trim(),
+              isEdited: true,
+              editedAt: editedTimestamp
             };
           }
           return t;
         });
         localStorage.setItem(`easy_due_transactions_${userId}`, JSON.stringify(parsed));
+      }
+      const custCacheKey = `easy_due_txs_${userId}_${tx.customerId}`;
+      const storedCust = localStorage.getItem(custCacheKey);
+      if (storedCust) {
+        const parsedCust = JSON.parse(storedCust).map((t: any) => {
+          if (t.id === transactionId) {
+            return {
+              ...t,
+              type: newType,
+              amount: newAmount,
+              description: newDescription.trim(),
+              isEdited: true,
+              editedAt: editedTimestamp
+            };
+          }
+          return t;
+        });
+        localStorage.setItem(custCacheKey, JSON.stringify(parsedCust));
       }
     } catch (e) {
       console.warn("Failed to update edited tx in local cache:", e);
@@ -1415,6 +1873,7 @@ const lastSubmitRef = useRef<{
 
     // Update local states optimistically
     setCustomerTransactions(prev => prev.map(t => t.id === transactionId ? updatedTx : t));
+    setAllCustomerTxs(prev => prev.map(t => t.id === transactionId ? updatedTx : t));
     setArchiveTransactions(prev => prev.map(t => t.id === transactionId ? updatedTx : t));
     setTransactions(prev => prev.map(t => t.id === transactionId ? updatedTx : t));
 
@@ -1426,7 +1885,9 @@ const lastSubmitRef = useRef<{
     batch.update(doc(db, 'users', userId, 'transactions', transactionId), {
       type: newType,
       amount: newAmount,
-      description: newDescription.trim()
+      description: newDescription.trim(),
+      isEdited: true,
+      editedAt: serverTimestamp()
     });
     batch.update(doc(db, 'users', userId, 'customers', tx.customerId), {
       outstandingDue: increment(netDiff),
@@ -1434,6 +1895,7 @@ const lastSubmitRef = useRef<{
     });
 
     adjustMonthlySummary(batch, userId, tx, updatedTx);
+    adjustDailySummary(batch, userId, tx, updatedTx);
 
     try {
       await batch.commit();
@@ -1447,6 +1909,7 @@ const lastSubmitRef = useRef<{
     if (!userId) return;
 
     let tx = customerTransactions.find(t => t.id === transactionId) ||
+             allCustomerTxs.find(t => t.id === transactionId) ||
              archiveTransactions.find(t => t.id === transactionId) ||
              transactions.find(t => t.id === transactionId);
 
@@ -1487,6 +1950,7 @@ const lastSubmitRef = useRef<{
 
     // Update memory states optimistically
     setCustomerTransactions(prev => prev.filter(t => t.id !== transactionId));
+    setAllCustomerTxs(prev => prev.filter(t => t.id !== transactionId));
     setArchiveTransactions(prev => prev.filter(t => t.id !== transactionId));
     setTransactions(prev => prev.filter(t => t.id !== transactionId));
 
@@ -1516,6 +1980,7 @@ const lastSubmitRef = useRef<{
     });
 
     adjustMonthlySummary(batch, userId, tx, null);
+    adjustDailySummary(batch, userId, tx, null);
     batch.update(doc(db, 'users', userId, 'customers', tx.customerId), {
       outstandingDue: increment(diff),
       updatedAt: serverTimestamp()
@@ -1530,7 +1995,8 @@ const lastSubmitRef = useRef<{
 
   const importLedgerData = async (
     backupData: any,
-    choice: 'merge' | 'clear' | 'skip'
+    choice: 'merge' | 'clear' | 'skip',
+    onProgress?: (progress: ImportProgress) => void
   ) => {
     if (!userId) return;
 
@@ -1541,6 +2007,13 @@ const lastSubmitRef = useRef<{
       throw new Error('INVALID_BACKUP_FILE');
     }
 
+    onProgress?.({
+      stage: 'parsing',
+      percent: 5,
+      message: 'ব্যাকআপ ফাইল বিশ্লেষণ করা হচ্ছে... / Parsing backup file...'
+    });
+    await new Promise(r => setTimeout(r, 40));
+
     // List of Firestore operations to commit
     const operations: { ref: any; data: any; type: 'set' | 'update' | 'delete' }[] = [];
 
@@ -1549,11 +2022,11 @@ const lastSubmitRef = useRef<{
     let newTrash: Customer[] = [...trashCustomers];
     let newTransactions: Transaction[] = [...transactions];
     let newReminders: Reminder[] = [...reminders];
+    let newGoals: SavingGoal[] = [...goals];
 
     if (choice === 'clear') {
-      // Clear Firestore references for existing customers, transactions, and reminders
+      // Clear Firestore references for existing customers, transactions, reminders, and goals
       if (!isLocal) {
-        // Collect deletes for existing customers (both active and trash)
         for (const c of customers) {
           operations.push({
             ref: doc(db, 'users', userId, 'customers', c.id),
@@ -1568,18 +2041,34 @@ const lastSubmitRef = useRef<{
             type: 'delete'
           });
         }
-        // Collect deletes for transactions
-        for (const tx of transactions) {
+        try {
+          const allRemoteTxSnap = await getDocs(collection(db, 'users', userId, 'transactions'));
+          allRemoteTxSnap.forEach(d => {
+            operations.push({
+              ref: doc(db, 'users', userId, 'transactions', d.id),
+              data: null,
+              type: 'delete'
+            });
+          });
+        } catch (e) {
+          for (const tx of transactions) {
+            operations.push({
+              ref: doc(db, 'users', userId, 'transactions', tx.id),
+              data: null,
+              type: 'delete'
+            });
+          }
+        }
+        for (const r of reminders) {
           operations.push({
-            ref: doc(db, 'users', userId, 'transactions', tx.id),
+            ref: doc(db, 'users', userId, 'reminders', r.id),
             data: null,
             type: 'delete'
           });
         }
-        // Collect deletes for reminders
-        for (const r of reminders) {
+        for (const g of goals) {
           operations.push({
-            ref: doc(db, 'users', userId, 'reminders', r.id),
+            ref: doc(db, 'users', userId, 'goals', g.id),
             data: null,
             type: 'delete'
           });
@@ -1591,6 +2080,7 @@ const lastSubmitRef = useRef<{
       newTrash = [];
       newTransactions = [];
       newReminders = [];
+      newGoals = [];
 
       // Create new customers from backup
       const customerMap = new Map<string, Customer>(); // name lowercased -> Customer object
@@ -1604,7 +2094,7 @@ const lastSubmitRef = useRef<{
           userId,
           name: bc.name.trim(),
           phone: (bc.phone || '').trim(),
-          outstandingDue: bc.outstandingDue || 0,
+          outstandingDue: Number(bc.outstandingDue) || 0,
           createdAt: cDate,
           updatedAt: new Date()
         };
@@ -1619,7 +2109,7 @@ const lastSubmitRef = useRef<{
               userId,
               name: bc.name.trim(),
               phone: (bc.phone || '').trim(),
-              outstandingDue: bc.outstandingDue || 0,
+              outstandingDue: Number(bc.outstandingDue) || 0,
               createdAt: cDate,
               updatedAt: new Date()
             },
@@ -1634,7 +2124,6 @@ const lastSubmitRef = useRef<{
         const customerNameLower = cName.trim().toLowerCase();
         let matchedCustomer = customerMap.get(customerNameLower);
         
-        // If the customer isn't in the customer list for some reason, create them
         if (!matchedCustomer) {
           const customId = doc(collection(db, 'temp')).id;
           const customerObj: Customer = {
@@ -1675,7 +2164,7 @@ const lastSubmitRef = useRef<{
           customerId: matchedCustomer.id,
           customerName: matchedCustomer.name,
           type: bt.type,
-          amount: bt.amount,
+          amount: Number(bt.amount) || 0,
           description: (bt.description || '').trim(),
           date: txDate,
           createdAt: txDate
@@ -1691,7 +2180,7 @@ const lastSubmitRef = useRef<{
               customerId: matchedCustomer.id,
               customerName: matchedCustomer.name,
               type: bt.type,
-              amount: bt.amount,
+              amount: Number(bt.amount) || 0,
               description: (bt.description || '').trim(),
               date: txDate,
               createdAt: txDate
@@ -1700,14 +2189,66 @@ const lastSubmitRef = useRef<{
           });
         }
       }
+
+      // Reconciliation for 'clear': Verify every customer's transactions sum matches their authoritative outstandingDue
+      for (const [, cust] of customerMap.entries()) {
+        const custTxs = newTransactions.filter(t => t.customerId === cust.id);
+        const txSum = custTxs.reduce((sum, t) => sum + (t.type === 'due' ? t.amount : -t.amount), 0);
+        const targetDue = cust.outstandingDue || 0;
+        const diff = Math.round((targetDue - txSum) * 100) / 100;
+
+        if (Math.abs(diff) >= 0.01) {
+          const customTxId = doc(collection(db, 'temp')).id;
+          let earliestMs = cust.createdAt ? new Date(cust.createdAt).getTime() : Date.now();
+          if (custTxs.length > 0) {
+            const minTxMs = Math.min(...custTxs.map(t => new Date(t.date).getTime()));
+            earliestMs = Math.min(earliestMs, minTxMs);
+          }
+          const adjDate = new Date(earliestMs - 1000); // 1 second earlier
+          const adjType: 'due' | 'payment' = diff > 0 ? 'due' : 'payment';
+          const adjAmount = Math.abs(diff);
+
+          const adjTx: Transaction = {
+            id: customTxId,
+            userId,
+            customerId: cust.id,
+            customerName: cust.name,
+            type: adjType,
+            amount: adjAmount,
+            description: 'পূর্ববর্তী জের সমন্বয় / Initial Balance Adjustment',
+            date: adjDate,
+            createdAt: adjDate
+          };
+          newTransactions.push(adjTx);
+
+          if (!isLocal) {
+            operations.push({
+              ref: doc(db, 'users', userId, 'transactions', customTxId),
+              data: {
+                id: customTxId,
+                userId,
+                customerId: cust.id,
+                customerName: cust.name,
+                type: adjType,
+                amount: adjAmount,
+                description: 'পূর্ববর্তী জের সমন্বয় / Initial Balance Adjustment',
+                date: adjDate,
+                createdAt: adjDate
+              },
+              type: 'set'
+            });
+          }
+        }
+      }
     } else {
       // choice === 'merge' or 'skip'
       // 1. Process customers
-      // Keep track of the current active customers by name
       const customerMap = new Map<string, Customer>();
       for (const c of newCustomers) {
         customerMap.set(c.name.trim().toLowerCase(), c);
       }
+
+      const newlyAddedCustomerIds = new Set<string>();
 
       for (const bc of backupData.customers) {
         if (!bc.name) continue;
@@ -1716,7 +2257,6 @@ const lastSubmitRef = useRef<{
 
         if (existing) {
           if (choice === 'merge') {
-            // Update phone if different
             const backupPhone = (bc.phone || '').trim();
             if (backupPhone && existing.phone !== backupPhone) {
               existing.phone = backupPhone;
@@ -1732,7 +2272,7 @@ const lastSubmitRef = useRef<{
             }
           }
         } else {
-          // Customer does not exist, create new one
+          // Brand new customer from backup: retain master balance
           const customId = doc(collection(db, 'temp')).id;
           const cDate = bc.createdAt ? new Date(bc.createdAt) : new Date();
           const customerObj: Customer = {
@@ -1740,12 +2280,13 @@ const lastSubmitRef = useRef<{
             userId,
             name: bc.name.trim(),
             phone: (bc.phone || '').trim(),
-            outstandingDue: 0, // will accumulate from new transactions
+            outstandingDue: Number(bc.outstandingDue) || 0,
             createdAt: cDate,
             updatedAt: new Date()
           };
           customerMap.set(key, customerObj);
           newCustomers.push(customerObj);
+          newlyAddedCustomerIds.add(customId);
 
           if (!isLocal) {
             operations.push({
@@ -1755,7 +2296,7 @@ const lastSubmitRef = useRef<{
                 userId,
                 name: bc.name.trim(),
                 phone: (bc.phone || '').trim(),
-                outstandingDue: 0,
+                outstandingDue: Number(bc.outstandingDue) || 0,
                 createdAt: cDate,
                 updatedAt: new Date()
               },
@@ -1765,13 +2306,20 @@ const lastSubmitRef = useRef<{
         }
       }
 
+      // Pre-build O(1) duplicate lookup index
+      const existingTxSet = new Set<string>();
+      for (const tx of newTransactions) {
+        const txDateMs = tx.date ? new Date(tx.date).getTime() : 0;
+        const roundedSec = Math.floor(txDateMs / 2000);
+        existingTxSet.add(`${tx.customerId}|${tx.type}|${tx.amount}|${(tx.description || '').trim().toLowerCase()}|${roundedSec}`);
+      }
+
       // 2. Process transactions
       for (const bt of backupData.ledgerTransactions) {
         const cName = bt.customer || (bt as any).customerName; if (!cName) continue;
         const key = cName.trim().toLowerCase();
         let matchedCustomer = customerMap.get(key);
 
-        // If customer doesn't exist (can happen if transactions contains entries for someone not in customers list)
         if (!matchedCustomer) {
           const customId = doc(collection(db, 'temp')).id;
           const customerObj: Customer = {
@@ -1786,6 +2334,7 @@ const lastSubmitRef = useRef<{
           customerMap.set(key, customerObj);
           newCustomers.push(customerObj);
           matchedCustomer = customerObj;
+          newlyAddedCustomerIds.add(customId);
 
           if (!isLocal) {
             operations.push({
@@ -1804,19 +2353,12 @@ const lastSubmitRef = useRef<{
           }
         }
 
-        // Check if transaction already exists in our live transaction list
         const btDateMs = bt.date ? new Date(bt.date).getTime() : 0;
-        const exists = newTransactions.some(tx => {
-          if (tx.customerId !== matchedCustomer!.id) return false;
-          if (tx.type !== bt.type) return false;
-          if (tx.amount !== bt.amount) return false;
-          if ((tx.description || '').trim() !== (bt.description || '').trim()) return false;
-          // Compare dates with tolerance (within 1 second)
-          const txDateMs = new Date(tx.date).getTime();
-          return Math.abs(txDateMs - btDateMs) < 1000;
-        });
+        const roundedSec = Math.floor(btDateMs / 2000);
+        const txKey = `${matchedCustomer.id}|${bt.type}|${bt.amount}|${(bt.description || '').trim().toLowerCase()}|${roundedSec}`;
 
-        if (!exists) {
+        if (!existingTxSet.has(txKey)) {
+          existingTxSet.add(txKey);
           const customTxId = doc(collection(db, 'temp')).id;
           const txDate = bt.date ? new Date(bt.date) : new Date();
           const txObj: Transaction = {
@@ -1825,7 +2367,7 @@ const lastSubmitRef = useRef<{
             customerId: matchedCustomer.id,
             customerName: matchedCustomer.name,
             type: bt.type,
-            amount: bt.amount,
+            amount: Number(bt.amount) || 0,
             description: (bt.description || '').trim(),
             date: txDate,
             createdAt: txDate
@@ -1841,7 +2383,7 @@ const lastSubmitRef = useRef<{
                 customerId: matchedCustomer.id,
                 customerName: matchedCustomer.name,
                 type: bt.type,
-                amount: bt.amount,
+                amount: Number(bt.amount) || 0,
                 description: (bt.description || '').trim(),
                 date: txDate,
                 createdAt: txDate
@@ -1850,23 +2392,75 @@ const lastSubmitRef = useRef<{
             });
           }
 
-          // Accumulate balance
-          const diff = bt.type === 'due' ? bt.amount : -bt.amount;
-          matchedCustomer.outstandingDue += diff;
-          matchedCustomer.updatedAt = new Date();
+          if (!newlyAddedCustomerIds.has(matchedCustomer.id)) {
+            const diff = bt.type === 'due' ? bt.amount : -bt.amount;
+            matchedCustomer.outstandingDue += diff;
+            matchedCustomer.updatedAt = new Date();
+          }
         }
       }
 
-      // Sync customer balance updates to Firestore for customers that had updates
+      // For newly added customers in merge/skip: verify ledger matches authoritative outstandingDue
+      for (const custId of newlyAddedCustomerIds) {
+        const cust = newCustomers.find(c => c.id === custId);
+        if (!cust) continue;
+        const custTxs = newTransactions.filter(t => t.customerId === cust.id);
+        const txSum = custTxs.reduce((sum, t) => sum + (t.type === 'due' ? t.amount : -t.amount), 0);
+        const targetDue = cust.outstandingDue || 0;
+        const diff = Math.round((targetDue - txSum) * 100) / 100;
+
+        if (Math.abs(diff) >= 0.01) {
+          const customTxId = doc(collection(db, 'temp')).id;
+          let earliestMs = cust.createdAt ? new Date(cust.createdAt).getTime() : Date.now();
+          if (custTxs.length > 0) {
+            const minTxMs = Math.min(...custTxs.map(t => new Date(t.date).getTime()));
+            earliestMs = Math.min(earliestMs, minTxMs);
+          }
+          const adjDate = new Date(earliestMs - 1000);
+          const adjType: 'due' | 'payment' = diff > 0 ? 'due' : 'payment';
+          const adjAmount = Math.abs(diff);
+
+          const adjTx: Transaction = {
+            id: customTxId,
+            userId,
+            customerId: cust.id,
+            customerName: cust.name,
+            type: adjType,
+            amount: adjAmount,
+            description: 'পূর্ববর্তী জের সমন্বয় / Initial Balance Adjustment',
+            date: adjDate,
+            createdAt: adjDate
+          };
+          newTransactions.push(adjTx);
+
+          if (!isLocal) {
+            operations.push({
+              ref: doc(db, 'users', userId, 'transactions', customTxId),
+              data: {
+                id: customTxId,
+                userId,
+                customerId: cust.id,
+                customerName: cust.name,
+                type: adjType,
+                amount: adjAmount,
+                description: 'পূর্ববর্তী জের সমন্বয় / Initial Balance Adjustment',
+                date: adjDate,
+                createdAt: adjDate
+              },
+              type: 'set'
+            });
+          }
+        }
+      }
+
+      // Sync customer balance updates to Firestore for existing customers
       if (!isLocal) {
         for (const c of newCustomers) {
           const opIndex = operations.findIndex(op => op.type === 'set' && op.ref.id === c.id);
           if (opIndex >= 0) {
-            // Update the set operation data
             operations[opIndex].data.outstandingDue = c.outstandingDue;
             operations[opIndex].data.updatedAt = c.updatedAt;
           } else {
-            // Check if customer outstandingDue changed from original.
             const original = customers.find(orig => orig.id === c.id);
             if (original && (original.outstandingDue !== c.outstandingDue || original.phone !== c.phone)) {
               operations.push({
@@ -1884,7 +2478,98 @@ const lastSubmitRef = useRef<{
       }
     }
 
-    // Execute Firestore operations in chunks of 400
+    // 3. Process Goals from backup (for all choices)
+    if (Array.isArray(backupData.goals)) {
+      const existingGoalMap = new Map<string, SavingGoal>();
+      for (const g of newGoals) {
+        existingGoalMap.set(g.title.trim().toLowerCase(), g);
+      }
+
+      for (const bg of backupData.goals) {
+        if (!bg.title) continue;
+        const goalTitleKey = bg.title.trim().toLowerCase();
+        const existingGoal = existingGoalMap.get(goalTitleKey);
+
+        let matchedCustId = bg.customerId;
+        let matchedCustName = bg.customerName;
+        if (bg.customerName) {
+          const matchedCust = newCustomers.find(c => c.name.toLowerCase() === bg.customerName.toLowerCase());
+          if (matchedCust) {
+            matchedCustId = matchedCust.id;
+            matchedCustName = matchedCust.name;
+          }
+        }
+
+        if (choice === 'clear' || !existingGoal) {
+          const customGoalId = doc(collection(db, 'temp')).id;
+          const goalDate = bg.createdAt ? new Date(bg.createdAt) : new Date();
+          const goalObj: SavingGoal = {
+            id: customGoalId,
+            userId,
+            title: bg.title.trim(),
+            targetAmount: Number(bg.targetAmount) || 0,
+            savedAmount: Number(bg.savedAmount) || 0,
+            frequency: bg.frequency || 'monthly',
+            installmentAmount: bg.installmentAmount ? Number(bg.installmentAmount) : undefined,
+            type: bg.type || 'savings',
+            status: bg.status || 'active',
+            customerId: matchedCustId || undefined,
+            customerName: matchedCustName || undefined,
+            notes: bg.notes?.trim() || undefined,
+            principalAmount: bg.principalAmount ? Number(bg.principalAmount) : undefined,
+            interestRate: bg.interestRate !== undefined ? Number(bg.interestRate) : undefined,
+            interestAmount: bg.interestAmount !== undefined ? Number(bg.interestAmount) : undefined,
+            tenure: bg.tenure ? Number(bg.tenure) : undefined,
+            createdAt: goalDate,
+            updatedAt: bg.updatedAt ? new Date(bg.updatedAt) : new Date(),
+            contributions: Array.isArray(bg.contributions) ? bg.contributions.map((c: any) => ({
+              id: c.id || doc(collection(db, 'temp')).id,
+              amount: Number(c.amount) || 0,
+              date: c.date || new Date().toISOString(),
+              note: c.note || undefined
+            })) : []
+          };
+          newGoals.push(goalObj);
+          existingGoalMap.set(goalTitleKey, goalObj);
+
+          if (!isLocal) {
+            operations.push({
+              ref: doc(db, 'users', userId, 'goals', customGoalId),
+              data: {
+                ...goalObj,
+                createdAt: goalDate,
+                updatedAt: new Date()
+              },
+              type: 'set'
+            });
+          }
+        } else if (choice === 'merge' && existingGoal) {
+          const backupSaved = Number(bg.savedAmount) || 0;
+          const backupContribs = Array.isArray(bg.contributions) ? bg.contributions : [];
+          if (backupSaved > (existingGoal.savedAmount || 0) || backupContribs.length > (existingGoal.contributions?.length || 0)) {
+            existingGoal.savedAmount = Math.max(existingGoal.savedAmount || 0, backupSaved);
+            existingGoal.contributions = backupContribs;
+            existingGoal.status = bg.status || existingGoal.status;
+            existingGoal.updatedAt = new Date();
+
+            if (!isLocal) {
+              operations.push({
+                ref: doc(db, 'users', userId, 'goals', existingGoal.id),
+                data: {
+                  savedAmount: existingGoal.savedAmount,
+                  contributions: existingGoal.contributions,
+                  status: existingGoal.status,
+                  updatedAt: new Date()
+                },
+                type: 'update'
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // 4. Execute Firestore batch commits with live progress and thread yielding
     if (!isLocal && operations.length > 0) {
       const chunkArray = <T>(arr: T[], size: number): T[][] => {
         const chunks: T[][] = [];
@@ -1895,7 +2580,20 @@ const lastSubmitRef = useRef<{
       };
 
       const chunks = chunkArray(operations, 400);
+      let batchIdx = 0;
       for (const chunk of chunks) {
+        batchIdx++;
+        const percent = 10 + Math.round((batchIdx / chunks.length) * 75);
+        onProgress?.({
+          stage: 'saving',
+          percent,
+          currentBatch: batchIdx,
+          totalBatches: chunks.length,
+          processedCount: Math.min(operations.length, batchIdx * 400),
+          totalCount: operations.length,
+          message: `ক্লাউড সার্ভারে ডাটা সংরক্ষণ হচ্ছে (ব্যাচ ${batchIdx} / ${chunks.length})...`
+        });
+
         const batch = writeBatch(db);
         for (const op of chunk) {
           if (op.type === 'set') {
@@ -1907,6 +2605,7 @@ const lastSubmitRef = useRef<{
           }
         }
         await batch.commit();
+        await new Promise(r => setTimeout(r, 25));
       }
     }
 
@@ -1915,11 +2614,13 @@ const lastSubmitRef = useRef<{
     setTrashCustomers(newTrash);
     setTransactions(newTransactions);
     setReminders(newReminders);
+    setGoals(newGoals);
 
     // Save to local storage
     saveLocalCustomers([...newCustomers, ...newTrash]);
     saveLocalTransactions(newTransactions);
     saveLocalReminders(newReminders);
+    saveLocalGoals(newGoals);
 
     if (settings) {
       const newSettings = {
@@ -1932,31 +2633,27 @@ const lastSubmitRef = useRef<{
 
     setTransactions(newTransactions);
     setCustomerTransactions([]);
+    setAllCustomerTxs([]);
     setArchiveTransactions([]);
 
     if (!isLocal) {
+      onProgress?.({
+        stage: 'summaries',
+        percent: 90,
+        message: 'মাসিক সারাংশ ও এনালিটিক্স তৈরি হচ্ছে... / Rebuilding monthly analytics...'
+      });
       await rebuildMonthlySummaries(userId);
     }
+
+    onProgress?.({
+      stage: 'done',
+      percent: 100,
+      message: 'ইম্পোর্ট সফলভাবে সম্পন্ন হয়েছে! / Data imported successfully!'
+    });
   };
 
-  // 6. Background Migration: Initialize transaction count and monthly summaries if missing
-  useEffect(() => {
-    if (!userId || userId === 'local-guest-session' || isOfflineFallback || !settings) return;
-    if (settings.transactionsCount === undefined) {
-      console.log("Initializing transaction count and monthly summaries...");
-      rebuildMonthlySummaries(userId).catch(e => console.warn(e));
-    }
-  }, [userId, settings, isOfflineFallback]);
-
-  // Auto-heal Monthly Summaries: rebuild if user has transactions but summaries is empty
-  useEffect(() => {
-    if (!userId || userId === 'local-guest-session' || isOfflineFallback || !settings) return;
-    const txCount = settings.transactionsCount || 0;
-    if (txCount > 0 && monthlySummaries.length === 0) {
-      console.log("Monthly summaries empty but user has transactions. Auto-healing summaries...");
-      rebuildMonthlySummaries(userId).catch(e => console.warn(e));
-    }
-  }, [userId, settings?.transactionsCount, monthlySummaries.length, isOfflineFallback]);
+  // Note: Automated full-database scans on startup were decommissioned to protect Firebase read limits.
+  // Rebuilding summaries is available on-demand via SettingsManager ("Rebuild & Repair") and during data imports.
 
   // 5. Automatic cleanup of trashed items older than 14 days
   useEffect(() => {
@@ -2026,12 +2723,30 @@ const lastSubmitRef = useRef<{
     }
 
     const goalDocRef = doc(db, 'users', userId, 'goals', customGoalId);
+    const firestoreGoal: any = {
+      id: customGoalId,
+      userId,
+      title: title.trim(),
+      targetAmount: Number(targetAmount) || 0,
+      savedAmount: 0,
+      frequency,
+      type,
+      status: 'active',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      contributions: []
+    };
+    if (installmentAmount && installmentAmount > 0) firestoreGoal.installmentAmount = Number(installmentAmount);
+    if (customerId) firestoreGoal.customerId = customerId;
+    if (customerName) firestoreGoal.customerName = customerName;
+    if (notes) firestoreGoal.notes = notes.trim();
+    if (principalAmount) firestoreGoal.principalAmount = Number(principalAmount);
+    if (interestRate !== undefined) firestoreGoal.interestRate = Number(interestRate);
+    if (interestAmount !== undefined) firestoreGoal.interestAmount = Number(interestAmount);
+    if (tenure) firestoreGoal.tenure = Number(tenure);
+
     try {
-      await setDoc(goalDocRef, {
-        ...newGoal,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
+      await setDoc(goalDocRef, firestoreGoal);
       return customGoalId;
     } catch (err) {
       console.warn("Firestore createGoal failed, saved locally:", err);
@@ -2154,6 +2869,144 @@ const lastSubmitRef = useRef<{
     }
   };
 
+  const updateGoalTitle = async (goalId: string, newTitle: string) => {
+    if (!userId || !newTitle.trim()) return;
+    const trimmed = newTitle.trim();
+    const updatedGoals = goals.map(g => 
+      g.id === goalId ? { ...g, title: trimmed, updatedAt: new Date() } : g
+    );
+    setGoals(updatedGoals);
+    saveLocalGoals(updatedGoals);
+
+    if (userId === 'local-guest-session' || isOfflineFallback) return;
+
+    const goalDocRef = doc(db, 'users', userId, 'goals', goalId);
+    try {
+      await updateDoc(goalDocRef, {
+        title: trimmed,
+        updatedAt: serverTimestamp()
+      });
+    } catch (err) {
+      console.warn("Firestore updateGoalTitle failed, saved locally:", err);
+    }
+  };
+
+  const updateGoalNotes = async (goalId: string, newNotes: string) => {
+    if (!userId) return;
+    const trimmed = newNotes.trim();
+    const updatedGoals = goals.map(g => 
+      g.id === goalId ? { ...g, notes: trimmed || undefined, updatedAt: new Date() } : g
+    );
+    setGoals(updatedGoals);
+    saveLocalGoals(updatedGoals);
+
+    if (userId === 'local-guest-session' || isOfflineFallback) return;
+
+    const goalDocRef = doc(db, 'users', userId, 'goals', goalId);
+    try {
+      await updateDoc(goalDocRef, {
+        notes: trimmed,
+        updatedAt: serverTimestamp()
+      });
+    } catch (err) {
+      console.warn("Firestore updateGoalNotes failed, saved locally:", err);
+    }
+  };
+
+  const editGoalContribution = async (
+    goalId: string,
+    contributionId: string,
+    newAmount: number,
+    newNote: string
+  ) => {
+    if (!userId || newAmount <= 0) return;
+    const goal = goals.find(g => g.id === goalId);
+    if (!goal) return;
+
+    const currentContribs = goal.contributions || [];
+    const targetContrib = currentContribs.find(c => (c.id && c.id === contributionId) || (!c.id && c.date === contributionId));
+    if (!targetContrib) return;
+
+    const diff = newAmount - targetContrib.amount;
+    const updatedContribs = currentContribs.map(c => 
+      ((c.id && c.id === contributionId) || (!c.id && c.date === contributionId))
+        ? { ...c, id: c.id || contributionId, amount: newAmount, note: newNote.trim() }
+        : c
+    );
+    const newSaved = Math.max(0, (goal.savedAmount || 0) + diff);
+    const isCompleted = newSaved >= (Number(goal.targetAmount) || 0);
+    const newStatus = isCompleted ? ('completed' as const) : (goal.status === 'completed' ? 'active' : goal.status);
+
+    const updatedGoal: SavingGoal = {
+      ...goal,
+      savedAmount: newSaved,
+      status: newStatus,
+      contributions: updatedContribs,
+      updatedAt: new Date()
+    };
+
+    const updatedGoals = goals.map(g => (g.id === goalId ? updatedGoal : g));
+    setGoals(updatedGoals);
+    saveLocalGoals(updatedGoals);
+
+    if (userId === 'local-guest-session' || isOfflineFallback) return;
+
+    const goalDocRef = doc(db, 'users', userId, 'goals', goalId);
+    try {
+      await updateDoc(goalDocRef, {
+        savedAmount: newSaved,
+        status: newStatus,
+        contributions: updatedContribs,
+        updatedAt: serverTimestamp()
+      });
+    } catch (err) {
+      console.warn("Firestore editGoalContribution failed, saved locally:", err);
+    }
+  };
+
+  const deleteGoalContribution = async (goalId: string, contributionId: string) => {
+    if (!userId) return;
+    const goal = goals.find(g => g.id === goalId);
+    if (!goal) return;
+
+    const currentContribs = goal.contributions || [];
+    const targetContrib = currentContribs.find(c => (c.id && c.id === contributionId) || (!c.id && c.date === contributionId));
+    if (!targetContrib) return;
+
+    const updatedContribs = currentContribs.filter(c => 
+      !((c.id && c.id === contributionId) || (!c.id && c.date === contributionId))
+    );
+    const newSaved = Math.max(0, (goal.savedAmount || 0) - targetContrib.amount);
+    const isCompleted = newSaved >= (Number(goal.targetAmount) || 0);
+    const newStatus = isCompleted ? ('completed' as const) : (goal.status === 'completed' ? 'active' : goal.status);
+
+    const updatedGoal: SavingGoal = {
+      ...goal,
+      savedAmount: newSaved,
+      status: newStatus,
+      contributions: updatedContribs,
+      updatedAt: new Date()
+    };
+
+    const updatedGoals = goals.map(g => (g.id === goalId ? updatedGoal : g));
+    setGoals(updatedGoals);
+    saveLocalGoals(updatedGoals);
+
+    if (userId === 'local-guest-session' || isOfflineFallback) return;
+
+    const goalDocRef = doc(db, 'users', userId, 'goals', goalId);
+    try {
+      await updateDoc(goalDocRef, {
+        savedAmount: newSaved,
+        status: newStatus,
+        contributions: updatedContribs,
+        updatedAt: serverTimestamp()
+      });
+    } catch (err) {
+      console.warn("Firestore deleteGoalContribution failed, saved locally:", err);
+    }
+  };
+
   const exportBackup = async () => {
     if (!userId) return null;
     let allTxs: Transaction[] = [];
@@ -2194,6 +3047,30 @@ const lastSubmitRef = useRef<{
         amount: t.amount,
         description: t.description,
         date: t.date
+      })),
+      goals: goals.map(g => ({
+        id: g.id,
+        title: g.title,
+        targetAmount: g.targetAmount,
+        savedAmount: g.savedAmount,
+        frequency: g.frequency,
+        installmentAmount: g.installmentAmount,
+        type: g.type,
+        status: g.status,
+        customerName: g.customerName || (g.customerId ? customers.find(c => c.id === g.customerId)?.name : undefined),
+        notes: g.notes,
+        principalAmount: g.principalAmount,
+        interestRate: g.interestRate,
+        interestAmount: g.interestAmount,
+        tenure: g.tenure,
+        createdAt: g.createdAt instanceof Date ? g.createdAt.toISOString() : (g.createdAt?.toDate ? g.createdAt.toDate().toISOString() : g.createdAt),
+        updatedAt: g.updatedAt instanceof Date ? g.updatedAt.toISOString() : (g.updatedAt?.toDate ? g.updatedAt.toDate().toISOString() : g.updatedAt),
+        contributions: (g.contributions || []).map(c => ({
+          id: c.id,
+          amount: c.amount,
+          date: c.date,
+          note: c.note
+        }))
       }))
     };
   };
@@ -2204,7 +3081,7 @@ const lastSubmitRef = useRef<{
     customerTransactions: customerTransactions.filter(t => customers.some(c => c.id === t.customerId)),
     dailyTransactions: dailyTransactions.filter(t => customers.some(c => c.id === t.customerId)),
     todayTransactions: todayTransactions.filter(t => customers.some(c => c.id === t.customerId)),
-    reminders: reminders.filter(r => customers.some(c => c.id === r.customerId)),
+    reminders: reminders.filter(r => r.type === 'emi' || Boolean(r.goalId) || customers.some(c => c.id === r.customerId)),
     settings,
     loading,
     isOfflineFallback,
@@ -2235,7 +3112,14 @@ const lastSubmitRef = useRef<{
     addGoalContribution,
     deleteGoal,
     updateGoalStatus,
+    updateGoalTitle,
+    updateGoalNotes,
+    editGoalContribution,
+    deleteGoalContribution,
     exportBackup,
-    rebuildMonthlySummaries: () => rebuildMonthlySummaries(userId)
+    rebuildMonthlySummaries: async () => { if (userId) await rebuildMonthlySummaries(userId); },
+    archivedStatements,
+    updateStatementAutoMerge,
+    exportArchivedStatements
   };
 }

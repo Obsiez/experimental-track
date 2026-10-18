@@ -18,15 +18,15 @@ export const translations = {
  updatingBackup: "Updating book entries from backup...",
  
  // Auth login page
- ledgerForTablet: "Offline Challan Ledger for Tablet & Phone",
+ ledgerForTablet: "Cloud-Synced Digital Ledger for Any Device",
  trackAndDeduct: "Track and Deduct Automatically",
  trackDesc: "Insert custom dues. When customers send money, subtract instantly without paper calculations.",
  cloudSync: "Cloud Sync & Double Offline Mode",
  cloudDesc: "Safely inputs data offline in spots with no signal. Automatically backs up to the cloud when connected.",
  simpleAlerts: "Simple Alerts (Large Fonts)",
  alertsDesc: "Designed with huge clear buttons specifically for non-tech-savvy users and parents.",
- googleSignIn: "Fast Sign-In with Google",
- guestSignIn: "Start Instantly (Instant Guest Mode)",
+ googleSignIn: "Sign-In with Google",
+ guestSignIn: "Start Instantly (Guest Mode)",
  offlineNotice: "By accessing Challan Track, you securely store calculations locally. Backups are private and encrypted for your device.",
 
  // Dashboard Screen
@@ -185,14 +185,14 @@ export const translations = {
  updatingBackup: "ব্যাকআপ থেকে খাতার আপডেট নেওয়া হচ্ছে...",
  
  // Auth login page
- ledgerForTablet: "ট্যাবলেট এবং ফোনের জন্য অফলাইন হিসাব খাতা",
+ ledgerForTablet: "যেকোনো ডিভাইসের জন্য ক্লাউড ডিজিটাল হিসাব খাতা",
  trackAndDeduct: "স্বয়ংক্রিয় হিসাব ও সমন্বয়",
  trackDesc: "যেকোনো বাকি বা পাওনা যুক্ত করুন। গ্রাহক টাকা দিলে কোনো কাগজের গণনা ছাড়াই তাৎক্ষণিক তা কেটে নিন।",
  cloudSync: "ক্লাউড সিঙ্ক এবং ডাবল অফলাইন মোড",
  cloudDesc: "ইন্টারনেট না থাকলেও অফলাইনে নিরাপদে ডেটা সংরক্ষণ করুন। ইন্টারনেট পেলে স্বয়ংক্রিয়ভাবে ক্লাউডে ব্যাকআপ হবে।",
  simpleAlerts: "সহজ অ্যালার্ট (বড় লেখা)",
  alertsDesc: "বিশেষ করে প্রযুক্তি-অদক্ষ ব্যবহারকারী ও বয়োজেষ্ঠদের জন্য ডিজাইন করা বিশাল ও স্পষ্ট বাটন।",
- googleSignIn: "গুগল দিয়ে দ্রুত লগইন করুন",
+ googleSignIn: "গুগল দিয়ে লগইন করুন",
  guestSignIn: "তাত্ক্ষণিক শুরু করুন (গেস্ট মোড)",
  offlineNotice: "চালান ট্র্যাক ব্যবহার করে আপনার হিসাবগুলো নিরাপদে ডিভাইসেই থাকবে। ক্লাউড ব্যাকআপ সম্পূর্ণ ব্যক্তিগত এবং সুরক্ষিত থাকবে।",
 

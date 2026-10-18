@@ -1,91 +1,254 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Hind+Siliguri:wght@400;500;600;700&family=Noto+Sans+Bengali:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Noto+Sans+Bengali:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Outfit", "Plus Jakarta Sans", "Hind Siliguri", "Noto Sans Bengali", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-display: "Outfit", "Hind Siliguri", "Noto Sans Bengali", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-sans: "Plus Jakarta Sans", "Hind Siliguri", "Noto Sans Bengali", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", "Hind Siliguri", "Noto Sans Bengali", ui-monospace, SFMono-Regular, monospace;
 
-  --color-zinc-55: #fafafb;
-  --color-zinc-150: #ededf0;
-  --color-zinc-850: #202024;
+  /* Modern Fintech Palette */
+  --color-canvas-light: #FFFFFF;
+  --color-canvas-dark: #09090B;
+  
+  --color-surface-light: #FFFFFF;
+  --color-surface-dark: #121215;
+
+  --color-surface-muted-light: #FAFAFA;
+  --color-surface-muted-dark: #1A1A1F;
+
+  /* Distinctive Bold Border Palette */
+  --color-border-bold-light: #09090B;
+  --color-border-bold-dark: #E4E4E7;
+  
+  --color-border-subtle-light: #D4D4D8;
+  --color-border-subtle-dark: #3F3F46;
+
+  /* Default Emerald Inflow */
+  --color-fintech-emerald: #059669;
+  --color-fintech-emerald-glow: #10B981;
+
+  /* Controlled Crimson Credit & Overdue */
+  --color-fintech-crimson: #DC2626;
 }
 
 @variant dark (&:where(.dark, .dark *));
 
+:root {
+  color-scheme: light dark;
+  --accent-color: #059669;
+  --accent-rgb: 5, 150, 105;
+  --accent-subtle: rgba(5, 150, 105, 0.1);
+  --accent-subtle-border: rgba(5, 150, 105, 0.25);
+  --accent-glow: rgba(5, 150, 105, 0.35);
+
+  --theme-bg-canvas: #09090B;
+  --theme-bg-surface: #121215;
+  --theme-bg-elevated: #1A1A1F;
+  --theme-light-canvas: #FFFFFF;
+  --theme-light-surface: #FFFFFF;
+}
+
 html, body {
   overscroll-behavior-y: none !important;
   overscroll-behavior-x: none !important;
-  transition: background-color 0.5s ease, color 0.5s ease;
+  font-family: var(--font-sans);
+  background-color: var(--theme-light-canvas, #FFFFFF);
+  color: var(--color-slate-900, #09090B);
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+html.dark body {
+  background-color: var(--theme-bg-canvas, #09090B);
+  color: var(--color-slate-50, #FAFAFA);
+}
+
+/* Dynamic Theme Palette Surface Overrides */
+.dark .dark\:bg-\[\#07090E\],
+.dark .dark\:bg-\[\#07090E\]\/90,
+.dark .dark\:bg-\[\#07090E\]\/95 {
+  background-color: var(--theme-bg-canvas, #09090B) !important;
+}
+
+.dark .dark\:bg-\[\#0D121D\],
+.dark .dark\:bg-\[\#0F1623\],
+.dark .dark\:bg-\[\#141414\] {
+  background-color: var(--theme-bg-surface, #121215) !important;
+}
+
+.dark .dark\:bg-\[\#1E1E1E\],
+.dark .dark\:bg-\[\#1F1F1F\] {
+  background-color: var(--theme-bg-elevated, #1A1A1F) !important;
 }
 
 #root {
-  transition: background-color 0.5s ease, color 0.5s ease;
+  min-height: 100vh;
 }
 
-/* Hide scrollbar for clean modals */
-.hide-scrollbar::-webkit-scrollbar {
-  display: none;
-}
-.hide-scrollbar {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
+/* Precision Typography Rules */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+  letter-spacing: -0.025em;
+  font-weight: 700;
 }
 
-/* Custom scrollbar styling to stay clean */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: rgba(156, 163, 175, 0.3);
-  border-radius: 4px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(156, 163, 175, 0.5);
+.tabular-nums {
+  font-family: var(--font-display) !important;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
 }
 
-/* Prevent text selection highlight issues on quick double-taps for tablet devices */
+/* Bold borders for clickable panels (cards, action buttons, chips) */
+.clickable-panel {
+  border-width: 2px !important;
+  border-color: var(--color-slate-300, #D4D4D8);
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.clickable-panel:hover {
+  border-color: var(--color-slate-900, #09090B);
+}
+
+.dark .clickable-panel {
+  border-color: var(--color-slate-700, #3F3F46);
+}
+
+.dark .clickable-panel:hover {
+  border-color: var(--color-slate-50, #FAFAFA);
+}
+
+/* Confident, tactile bold borders for all editable input fields */
+input[type="text"],
+input[type="number"],
+input[type="tel"],
+input[type="email"],
+input[type="date"],
+input[type="time"],
+input[type="search"],
+textarea,
+select {
+  border-width: 2px !important;
+  border-style: solid;
+  border-color: var(--color-slate-300, #D4D4D8);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.dark input[type="text"],
+.dark input[type="number"],
+.dark input[type="tel"],
+.dark input[type="email"],
+.dark input[type="date"],
+.dark input[type="time"],
+.dark input[type="search"],
+.dark textarea,
+.dark select {
+  border-color: var(--color-slate-700, #3F3F46);
+}
+
+input[type="text"]:hover,
+input[type="number"]:hover,
+input[type="tel"]:hover,
+input[type="email"]:hover,
+input[type="date"]:hover,
+input[type="time"]:hover,
+input[type="search"]:hover,
+textarea:hover,
+select:hover {
+  border-color: var(--color-slate-400, #A1A1AA);
+}
+
+.dark input[type="text"]:hover,
+.dark input[type="number"]:hover,
+.dark input[type="tel"]:hover,
+.dark input[type="email"]:hover,
+.dark input[type="date"]:hover,
+.dark input[type="time"]:hover,
+.dark input[type="search"]:hover,
+.dark textarea:hover,
+.dark select:hover {
+  border-color: var(--color-slate-500, #71717A);
+}
+
+input[type="text"]:focus,
+input[type="number"]:focus,
+input[type="tel"]:focus,
+input[type="email"]:focus,
+input[type="date"]:focus,
+input[type="time"]:focus,
+input[type="search"]:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--accent-color, #059669) !important;
+  outline: none !important;
+  box-shadow: 0 0 0 1px var(--accent-color, #059669) !important;
+}
+
+/* Accent utilities dynamically linked to custom accent color */
+.bg-accent {
+  background-color: var(--accent-color);
+}
+
+.text-accent {
+  color: var(--accent-color);
+}
+
+.border-accent {
+  border-color: var(--accent-color);
+}
+
+.bg-accent-subtle {
+  background-color: var(--accent-subtle);
+}
+
+.border-accent-subtle {
+  border-color: var(--accent-subtle-border);
+}
+
+/* Touch & Interaction */
+button, a, input, select, textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
 .no-select {
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
 }
 
-/* Make sure buttons/clickable elements have clean taps on mobile device */
-button, a {
-  -webkit-tap-highlight-color: transparent;
+/* Hairline scrollbars */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.35);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.55);
 }
 
-/* Ensure large amounts, headings, and bold text prioritize Outfit & Plus Jakarta Sans for traditional, highly legible numbers and text */
-h1, h2, h3, h4, .text-5xl, .text-4xl, .text-3xl, .text-2xl, .text-xl, .text-lg, .font-bold, .font-extrabold, .font-black {
-  font-family: "Outfit", "Plus Jakarta Sans", "Hind Siliguri", "Noto Sans Bengali", sans-serif !important;
+.no-scrollbar::-webkit-scrollbar,
+.hide-scrollbar::-webkit-scrollbar {
+  display: none !important;
+}
+.no-scrollbar,
+.hide-scrollbar {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
 }
 
-/* 
-  Hardware-accelerated CSS animations for zero-lag mobile rendering 
-  Used instead of JS-based framer-motion to bypass the main thread.
-*/
+/* High-performance transitions */
 @keyframes smoothReveal {
-  0% { opacity: 0; transform: translateY(15px); }
+  0% { opacity: 0; transform: translateY(4px); }
   100% { opacity: 1; transform: translateY(0); }
-}
-.animate-reveal {
-  animation: smoothReveal 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  will-change: transform, opacity;
-  transform: translateZ(0);
 }
 
-@keyframes slideUpModal {
-  0% { opacity: 0; transform: translateY(100%); }
-  100% { opacity: 1; transform: translateY(0); }
-}
-.animate-slide-up {
-  animation: slideUpModal 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+.animate-reveal {
+  animation: smoothReveal 0.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   will-change: transform, opacity;
-  transform: translateZ(0);
 }
 
 * {
@@ -97,14 +260,42 @@ input, textarea, select, [contenteditable] {
   -webkit-user-select: auto;
 }
 
-
-
-
-/* Hide scrollbar utility */
-.no-scrollbar::-webkit-scrollbar {
-  display: none !important;
+/* Non-intrusive, compact Toast Notification UI (Sonner) */
+[data-sonner-toaster] {
+  z-index: 9999 !important;
+  font-family: var(--font-sans) !important;
 }
-.no-scrollbar {
-  -ms-overflow-style: none !important;
-  scrollbar-width: none !important;
+
+[data-sonner-toast].sonner-custom-toast {
+  background-color: rgba(255, 255, 255, 0.98) !important;
+  color: #09090B !important;
+  border: 2px solid #CBD5E1 !important;
+  border-radius: 14px !important;
+  padding: 12px 16px !important;
+  box-shadow: 0 12px 28px -6px rgba(0, 0, 0, 0.16), 0 4px 10px -2px rgba(0, 0, 0, 0.08) !important;
+  font-size: 12.5px !important;
+  font-weight: 700 !important;
+  line-height: 1.35 !important;
+  gap: 10px !important;
 }
+
+.dark [data-sonner-toast].sonner-custom-toast {
+  background-color: var(--theme-bg-surface, #0D121D) !important;
+  color: #FAFAFA !important;
+  border: 2px solid #334155 !important;
+  box-shadow: 0 16px 32px -6px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.05) !important;
+}
+
+[data-sonner-toast][data-type="success"] [data-icon] {
+  color: #10B981 !important;
+}
+
+[data-sonner-toast][data-type="error"] [data-icon] {
+  color: #F43F5E !important;
+}
+
+[data-sonner-toast][data-type="info"] [data-icon],
+[data-sonner-toast][data-type="warning"] [data-icon] {
+  color: #F59E0B !important;
+}
+

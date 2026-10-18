@@ -6,6 +6,9 @@ export interface UserSettings {
   createdAt: any; // Firestore Timestamp or ISO string
   updatedAt: any;
   transactionsCount?: number;
+  autoMergeStatements?: boolean;
+  statementKeepCount?: number;
+  biometricEnabled?: boolean;
 }
 
 export interface Customer {
@@ -30,6 +33,8 @@ export interface Transaction {
  description: string;
  date: any;
  createdAt: any;
+ isEdited?: boolean;
+ editedAt?: any;
 }
 
 export interface Reminder {
@@ -41,6 +46,10 @@ export interface Reminder {
  dueDate: any; // Target pay date
  active: boolean;
  createdAt: any;
+ type?: 'customer' | 'emi';
+ goalId?: string;
+ emiDayOfMonth?: number;
+ installmentAmount?: number;
 }
 
 export interface FirestoreErrorInfo {
@@ -83,3 +92,14 @@ export interface SavingGoal {
   tenure?: number;
   contributions: GoalContribution[];
 }
+
+export interface ImportProgress {
+  stage: 'parsing' | 'saving' | 'summaries' | 'done';
+  percent: number;
+  currentBatch?: number;
+  totalBatches?: number;
+  processedCount?: number;
+  totalCount?: number;
+  message: string;
+}
+

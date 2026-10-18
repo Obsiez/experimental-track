@@ -17,13 +17,15 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 
 export const db = initializeFirestore(app, {
- localCache: persistentLocalCache({
- tabManager: persistentMultipleTabManager()
- })
+  ignoreUndefinedProperties: true,
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager()
+  })
 }, '(default)');
 
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 export enum OperationType {
  CREATE = 'create',
